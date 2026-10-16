@@ -3,7 +3,7 @@ go = "1.27.2"
 nfpm = "2.48.0"
 
 [env]
-VERSION = "0.1.0"
+VERSION = "0.1.0" # x-release-please-version
 # A static binary runs on any distribution the packages target. Without cgo, user and group
 # lookups read /etc/passwd and /etc/group only, not SSSD or LDAP.
 CGO_ENABLED = "0"
@@ -31,4 +31,5 @@ run = [
   "mkdir -p dist",
   "nfpm package --config packaging/nfpm.yaml --packager rpm --target dist/",
   "nfpm package --config packaging/nfpm.yaml --packager deb --target dist/",
+  "cd dist && sha256sum *.rpm *.deb > SHA256SUMS",
 ]
