@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=globalprotect-native login callback
+Comment=Hands GlobalProtect login callbacks to gpn, or to the official client when gpn is not waiting
+Exec=/usr/bin/gpn callback %u
+NoDisplay=true
+MimeType=x-scheme-handler/globalprotectcallback;

@@ -1,0 +1,13 @@
+[Unit]
+Description=globalprotect-native desktop agent
+Documentation=https://github.com/dvjn/globalprotect-native
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/gpn agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

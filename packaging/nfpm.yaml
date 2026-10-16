@@ -1,0 +1,51 @@
+# nfpm builds the rpm and deb from this file: `mise run package`.
+# Paths are relative to the repository root.
+name: globalprotect-native
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+section: net
+priority: optional
+maintainer: dvjn <git@dvjn.dev>
+description: |
+  GlobalProtect VPN client for Linux.
+  A root daemon runs the tunnel over kernel ESP (XFRM) with an SSL fallback,
+  routes and DNS through policy routing and systemd-resolved, the gateway's
+  exclude domains, HIP reports and reconnects; `gpn` controls it as the user.
+  Not affiliated with Palo Alto Networks.
+homepage: https://github.com/dvjn/globalprotect-native
+
+overrides:
+  rpm:
+    depends: [nftables, systemd, xdg-utils]
+    recommends: [libnotify]
+  deb:
+    depends: [nftables, systemd, xdg-utils]
+    recommends: [libnotify-bin]
+
+contents:
+  - src: bin/gpn
+    dst: /usr/bin/gpn
+    file_info:
+      mode: 0755
+  - src: packaging/systemd/globalprotect-native.service
+    dst: /usr/lib/systemd/system/globalprotect-native.service
+  - src: packaging/systemd/gpn-agent.service
+    dst: /usr/lib/systemd/user/gpn-agent.service
+  - src: packaging/gpn-callback.desktop
+    dst: /usr/share/applications/gpn-callback.desktop
+  - src: packaging/sysusers.conf
+    dst: /usr/lib/sysusers.d/globalprotect-native.conf
+  - src: packaging/polkit.policy
+    dst: /usr/share/polkit-1/actions/org.dvjn.globalprotect-native.policy
+  - src: packaging/config.yaml
+    dst: /etc/globalprotect-native/config.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
+  postremove: packaging/scripts/postremove.sh

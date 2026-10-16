@@ -1,0 +1,30 @@
+# globalprotect-native daemon settings. The daemon reads them on each connect, so
+# apply an edit with:
+#   gpn reconnect
+# gpn detects everything it reports about this machine; this file only picks the
+# portal and gateway and switches features on or off.
+
+# Portal host name and gateway name. Usually left unset: `gpn connect --portal HOST` sets the
+# portal once, and the fastest gateway is used unless `--gateway NAME` picks one. Values here
+# override what users choose.
+# portal: vpn.example.com
+# gateway: Gateway Name
+
+# Connect when the daemon starts, at boot, once a portal has been chosen.
+auto_connect: true
+
+# Send the machine's SMBIOS UUID and serial number, as the official client does.
+device_identity: true
+
+# Skip ESP and always use the SSL tunnel.
+ssl_only: false
+
+# Send a host information profile report when the gateway asks for one.
+hip:
+  send: true
+
+# Extra domains to send around the tunnel, added to the gateway's own list.
+# "*.example.com" matches every subdomain of example.com; other entries match exactly.
+# exclude_domains:
+#   - "*.example.com"
+#   - www.example.org

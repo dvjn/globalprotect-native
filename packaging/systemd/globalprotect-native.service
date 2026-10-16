@@ -1,0 +1,29 @@
+[Unit]
+Description=globalprotect-native VPN daemon
+Documentation=https://github.com/dvjn/globalprotect-native
+Wants=network-online.target
+After=network-online.target systemd-resolved.service
+
+[Service]
+ExecStart=/usr/bin/gpn daemon
+# Whatever way the daemon ends, put routing, DNS, XFRM and nftables back.
+ExecStopPost=/usr/bin/gpn cleanup
+Restart=on-failure
+RestartSec=5
+
+RuntimeDirectory=globalprotect-native
+StateDirectory=globalprotect-native
+StateDirectoryMode=0700
+ConfigurationDirectory=globalprotect-native
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
