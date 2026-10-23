@@ -26,6 +26,11 @@ type Settings struct {
 	Device   string
 	Servers  []string
 	Suffixes []string
+	// Selective limits the servers to RoutingDomains, such as "~example.com", and the
+	// suffixes; other names go to the usual servers. Only systemd-resolved can do that: with
+	// /etc/resolv.conf every name goes to the servers.
+	Selective      bool
+	RoutingDomains []string
 }
 
 // Restore undoes Apply.
@@ -47,15 +52,19 @@ func usesResolved() bool {
 	return err == nil
 }
 
-// applyResolved routes every query to the tunnel's servers with the "~." routing domain.
+// applyResolved routes every query to the tunnel's servers with the "~." routing domain, or,
+// when selective, only the queries of the routing domains and suffixes.
 // resolved forgets the link's settings by itself when the device disappears.
 func applyResolved(settings Settings) (Restore, error) {
-	domains := []string{"~."}
+	domains, defaultRoute := []string{"~."}, "yes"
+	if settings.Selective {
+		domains, defaultRoute = settings.RoutingDomains, "no"
+	}
 	domains = append(domains, settings.Suffixes...)
 	for _, command := range [][]string{
 		append([]string{"dns", settings.Device}, settings.Servers...),
 		append([]string{"domain", settings.Device}, domains...),
-		{"default-route", settings.Device, "yes"},
+		{"default-route", settings.Device, defaultRoute},
 	} {
 		if output, err := exec.Command("resolvectl", command...).CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("resolvectl %s: %w: %s", strings.Join(command, " "), err, output)

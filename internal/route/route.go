@@ -37,6 +37,12 @@ type Plan struct {
 	LocalNetworkAccess bool
 	// ExcludeMark, when not zero, sends packets carrying this firewall mark to the main table.
 	ExcludeMark int
+	// IncludeOnly turns the plan around: only traffic to OnlyRoutes and packets carrying
+	// OnlyMark go through the tunnel, and the rest stays in the main table. LocalNetworkAccess
+	// and ExcludeMark do not apply.
+	IncludeOnly bool
+	OnlyRoutes  []*net.IPNet
+	OnlyMark    int
 }
 
 // Routing is the installed state, kept so Remove can undo exactly what Apply did.
@@ -81,12 +87,11 @@ func (routing *Routing) install(plan Plan) error {
 			return err
 		}
 	}
+	if plan.IncludeOnly {
+		return routing.installIncludeOnly(plan)
+	}
 	if plan.ExcludeMark != 0 {
-		marked := netlink.NewRule()
-		marked.Mark = uint32(plan.ExcludeMark)
-		marked.Table = unix.RT_TABLE_MAIN
-		marked.Priority = priorityMarked
-		if err := routing.addRule(marked); err != nil {
+		if err := routing.addRule(marked(plan.ExcludeMark, unix.RT_TABLE_MAIN)); err != nil {
 			return err
 		}
 	}
@@ -106,6 +111,34 @@ func (routing *Routing) install(plan Plan) error {
 		return err
 	}
 	return nil
+}
+
+// installIncludeOnly adds the rules that send only the chosen traffic to the tunnel's table.
+// Without a catch-all rule, everything else falls through to the main table.
+func (routing *Routing) installIncludeOnly(plan Plan) error {
+	if plan.OnlyMark != 0 {
+		if err := routing.addRule(marked(plan.OnlyMark, Table)); err != nil {
+			return err
+		}
+	}
+	for _, destination := range plan.OnlyRoutes {
+		rule := netlink.NewRule()
+		rule.Dst = destination
+		rule.Table = Table
+		rule.Priority = priorityTunnel
+		if err := routing.addRule(rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func marked(mark, table int) *netlink.Rule {
+	rule := netlink.NewRule()
+	rule.Mark = uint32(mark)
+	rule.Table = table
+	rule.Priority = priorityMarked
+	return rule
 }
 
 func toMain(destination *net.IPNet) *netlink.Rule {

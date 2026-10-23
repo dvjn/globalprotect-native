@@ -1,4 +1,4 @@
-package exclude
+package split
 
 import (
 	"fmt"
@@ -8,44 +8,62 @@ import (
 	"time"
 )
 
-// Mark is the firewall mark of excluded traffic. An ip rule sends it to the main table.
+// Mark is the firewall mark of split traffic. An ip rule sends it to the main table when it
+// goes around the tunnel, or to the tunnel's table when it goes through it.
 const Mark = 0x4501
 
 const tableName = "gpn"
 
 // minimumTimeout keeps an address in the set for at least this long, whatever its DNS TTL.
-// Open connections stay excluded beyond it through their conntrack mark.
+// Open connections stay split beyond it through their conntrack mark.
 const minimumTimeout = 5 * time.Minute
 
-// Firewall is the nftables table that marks and masquerades excluded traffic.
+// Direction is where marked traffic goes.
+type Direction int
+
+const (
+	// Around sends marked traffic outside the tunnel.
+	Around Direction = iota
+	// Through sends marked traffic into the tunnel.
+	Through
+)
+
+// Firewall is the nftables table that marks and masquerades split traffic.
 type Firewall struct {
-	device string
+	device    string
+	direction Direction
 }
 
 // InstallFirewall creates the table. Traffic to an address in its set gets a conntrack mark;
-// every packet of a marked connection gets the firewall mark, which reroutes it outside the
-// tunnel, and leaves through another device with its source rewritten.
-func InstallFirewall(device string) (*Firewall, error) {
+// every packet of a marked connection gets the firewall mark, which reroutes it, and leaves
+// with its source rewritten when the route the socket first chose went through another device.
+// Around, that is every marked packet not leaving through the tunnel device; through, every
+// marked packet leaving through it.
+func InstallFirewall(device string, direction Direction) (*Firewall, error) {
+	outgoing := "!="
+	if direction == Through {
+		outgoing = "=="
+	}
 	script := fmt.Sprintf(`table ip %[1]s {
-	set excluded {
+	set split {
 		type ipv4_addr
 		flags timeout
 	}
 	chain output {
 		type route hook output priority mangle; policy accept;
-		ip daddr @excluded ct mark set %#[2]x
+		ip daddr @split ct mark set %#[2]x
 		ct mark %#[2]x meta mark set %#[2]x
 	}
 	chain postrouting {
 		type nat hook postrouting priority srcnat; policy accept;
-		meta mark %#[2]x oifname != %[3]q masquerade
+		meta mark %#[2]x oifname %[4]s %[3]q masquerade
 	}
 }
-`, tableName, Mark, device)
+`, tableName, Mark, device, outgoing)
 	if err := runNft(script); err != nil {
 		return nil, err
 	}
-	return &Firewall{device: device}, nil
+	return &Firewall{device: device, direction: direction}, nil
 }
 
 // Add puts addresses into the set for ttl, or for minimumTimeout if that is longer.
@@ -58,7 +76,7 @@ func (firewall *Firewall) Add(addresses []net.IP, ttl time.Duration) error {
 	for _, address := range addresses {
 		elements = append(elements, fmt.Sprintf("%s timeout %ds", address, int(timeout.Seconds())))
 	}
-	return runNft(fmt.Sprintf("add element ip %s excluded { %s }\n", tableName, strings.Join(elements, ", ")))
+	return runNft(fmt.Sprintf("add element ip %s split { %s }\n", tableName, strings.Join(elements, ", ")))
 }
 
 // Remove deletes the table.

@@ -38,6 +38,20 @@ func TestLoadExcludeDomains(t *testing.T) {
 	}
 }
 
+func TestLoadInclude(t *testing.T) {
+	if Default().IncludeOnly() {
+		t.Error("the default config is include-only")
+	}
+	config := loadText(t, "include_domains:\n  - \"*.corp.example\"\ninclude_routes:\n  - 10.0.0.0/8\n  - 192.0.2.7\n")
+	if !reflect.DeepEqual(config.IncludeDomains, []string{"*.corp.example"}) ||
+		!reflect.DeepEqual(config.IncludeRoutes, []string{"10.0.0.0/8", "192.0.2.7"}) || !config.IncludeOnly() {
+		t.Errorf("got %q, %q", config.IncludeDomains, config.IncludeRoutes)
+	}
+	if !loadText(t, "include_routes: [10.0.0.0/8]\n").IncludeOnly() {
+		t.Error("include routes alone are not include-only")
+	}
+}
+
 func loadText(t *testing.T, text string) Config {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")

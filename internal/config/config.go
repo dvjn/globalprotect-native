@@ -29,7 +29,17 @@ type Config struct {
 	// ExcludeDomains are sent around the tunnel in addition to the gateway's own exclude list.
 	// "*.example.com" matches the subdomains of example.com; other entries match exactly.
 	ExcludeDomains []string `yaml:"exclude_domains,omitempty"`
+	// IncludeDomains and IncludeRoutes, when either is set, are all that goes through the
+	// tunnel, replacing the gateway's split tunneling and ExcludeDomains. Routes are IPv4
+	// addresses or CIDR ranges.
+	IncludeDomains []string `yaml:"include_domains,omitempty"`
+	IncludeRoutes  []string `yaml:"include_routes,omitempty"`
 	HIP            HIP      `yaml:"hip"`
+}
+
+// IncludeOnly reports whether only the included domains and routes go through the tunnel.
+func (config Config) IncludeOnly() bool {
+	return len(config.IncludeDomains) > 0 || len(config.IncludeRoutes) > 0
 }
 
 // HIP switches the host information profile report.

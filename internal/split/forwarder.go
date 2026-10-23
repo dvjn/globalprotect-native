@@ -1,4 +1,4 @@
-package exclude
+package split
 
 import (
 	"encoding/binary"
@@ -14,9 +14,12 @@ import (
 
 const upstreamTimeout = 5 * time.Second
 
-// Forwarder relays DNS queries to the tunnel's servers. Before it returns an answer for an
-// excluded name, it adds the answer's addresses to the firewall set, so the connection that
-// follows already leaves outside the tunnel.
+// Forwarder relays DNS queries to the tunnel's servers. Before it returns an answer for a
+// matching name, it adds the answer's addresses to the firewall set, so the connection that
+// follows is already split.
+//
+// When matching names go through the tunnel, it answers their AAAA queries with no addresses:
+// only IPv4 is split, and an IPv6 connection would leave outside the tunnel.
 type Forwarder struct {
 	udp       *net.UDPConn
 	tcp       *net.TCPListener
@@ -95,8 +98,13 @@ func (forwarder *Forwarder) serveTCPConnection(connection net.Conn) {
 	}
 }
 
-// exchange asks each upstream in turn and records excluded addresses from the first answer.
+// exchange asks each upstream in turn and records matching addresses from the first answer.
 func (forwarder *Forwarder) exchange(network string, query []byte) ([]byte, error) {
+	if forwarder.firewall.direction == Through {
+		if answer, blocked := withoutIPv6(query, forwarder.domains); blocked {
+			return answer, nil
+		}
+	}
 	var errs []error
 	for _, upstream := range forwarder.upstreams {
 		answer, err := ask(network, net.JoinHostPort(upstream, "53"), query)
@@ -104,7 +112,7 @@ func (forwarder *Forwarder) exchange(network string, query []byte) ([]byte, erro
 			errs = append(errs, err)
 			continue
 		}
-		if err := forwarder.recordExcluded(answer); err != nil {
+		if err := forwarder.recordMatched(answer); err != nil {
 			fmt.Fprintln(os.Stderr, "DNS forwarder:", err)
 		}
 		return answer, nil
@@ -134,17 +142,42 @@ func ask(network, upstream string, query []byte) ([]byte, error) {
 	return answer[:length], err
 }
 
-// recordExcluded adds the IPv4 addresses of an answer to the firewall set when the question is excluded.
-func (forwarder *Forwarder) recordExcluded(answer []byte) error {
-	addresses, ttl, excluded, err := excludedAddresses(answer, forwarder.domains)
-	if err != nil || !excluded {
+// recordMatched adds the IPv4 addresses of an answer to the firewall set when the question matches.
+func (forwarder *Forwarder) recordMatched(answer []byte) error {
+	addresses, ttl, matched, err := matchedAddresses(answer, forwarder.domains)
+	if err != nil || !matched {
 		return err
 	}
 	return forwarder.firewall.Add(addresses, ttl)
 }
 
-// excludedAddresses returns the A records of answer, with their shortest TTL, when its question is excluded.
-func excludedAddresses(answer []byte, domains Domains) ([]net.IP, time.Duration, bool, error) {
+// withoutIPv6 returns an answer with no records when query asks for the AAAA records of a matching name.
+func withoutIPv6(query []byte, domains Domains) ([]byte, bool) {
+	var parser dnsmessage.Parser
+	header, err := parser.Start(query)
+	if err != nil {
+		return nil, false
+	}
+	question, err := parser.Question()
+	if err != nil || question.Type != dnsmessage.TypeAAAA || !domains.Match(question.Name.String()) {
+		return nil, false
+	}
+	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{
+		ID:                 header.ID,
+		Response:           true,
+		OpCode:             header.OpCode,
+		RecursionDesired:   header.RecursionDesired,
+		RecursionAvailable: true,
+	})
+	if builder.StartQuestions() != nil || builder.Question(question) != nil {
+		return nil, false
+	}
+	answer, err := builder.Finish()
+	return answer, err == nil
+}
+
+// matchedAddresses returns the A records of answer, with their shortest TTL, when its question matches.
+func matchedAddresses(answer []byte, domains Domains) ([]net.IP, time.Duration, bool, error) {
 	var parser dnsmessage.Parser
 	if _, err := parser.Start(answer); err != nil {
 		return nil, 0, false, err

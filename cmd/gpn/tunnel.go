@@ -10,11 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dvjn/globalprotect-native/internal/config"
 	"github.com/dvjn/globalprotect-native/internal/control"
 	"github.com/dvjn/globalprotect-native/internal/dns"
-	"github.com/dvjn/globalprotect-native/internal/exclude"
 	"github.com/dvjn/globalprotect-native/internal/gp"
 	"github.com/dvjn/globalprotect-native/internal/route"
+	"github.com/dvjn/globalprotect-native/internal/split"
 	"github.com/dvjn/globalprotect-native/internal/tun"
 	"github.com/dvjn/globalprotect-native/internal/tunnel"
 )
@@ -63,7 +64,7 @@ func runTunnel(ctx context.Context, env environment, options tunnelOptions) erro
 		}
 	}
 
-	traffic, err := newTrafficPlan(opened.gateway.Address, gatewayConfig, env.settings.ExcludeDomains)
+	traffic, err := newTrafficPlan(opened.gateway.Address, gatewayConfig, env.settings)
 	if err != nil {
 		return err
 	}
@@ -189,14 +190,14 @@ func runCleanup(args []string) error {
 	return removeLeftovers()
 }
 
-// removeLeftovers deletes rules, the tunnel device, XFRM state, the exclude table and a
+// removeLeftovers deletes rules, the tunnel device, XFRM state, the split table and a
 // replaced resolv.conf that an earlier run did not get to remove. resolved forgets the
 // device's DNS settings together with the device.
 func removeLeftovers() error {
 	return errors.Join(
 		route.RemoveLeftovers(),
 		dns.RestoreLeftovers(),
-		exclude.RemoveLeftovers(),
+		split.RemoveLeftovers(),
 		tunnel.RemoveLeftovers(deviceName, espInterfaceID),
 	)
 }
@@ -205,13 +206,15 @@ func removeLeftovers() error {
 type trafficPlan struct {
 	routing route.Plan
 	dns     dns.Settings
-	// excluded names leave outside the tunnel; a DNS forwarder on clientIP finds their addresses.
-	excluded exclude.Domains
-	clientIP net.IP
+	// domains leave outside the tunnel, or alone go through it in include-only mode; a DNS
+	// forwarder on clientIP finds their addresses.
+	domains   split.Domains
+	direction split.Direction
+	clientIP  net.IP
 }
 
 // newTrafficPlan resolves everything the plan needs before the tunnel takes over DNS.
-func newTrafficPlan(gatewayHost string, gatewayConfig gp.GatewayConfig, extraDomains []string) (trafficPlan, error) {
+func newTrafficPlan(gatewayHost string, gatewayConfig gp.GatewayConfig, settings config.Config) (trafficPlan, error) {
 	gateways, err := gatewayAddresses(gatewayHost, gatewayConfig.GatewayAddress)
 	if err != nil {
 		return trafficPlan{}, err
@@ -224,7 +227,6 @@ func newTrafficPlan(gatewayHost string, gatewayConfig gp.GatewayConfig, extraDom
 	if err != nil {
 		return trafficPlan{}, err
 	}
-	excluded := exclude.NewDomains(append(gatewayConfig.ExcludeDomains, extraDomains...))
 	plan := trafficPlan{
 		routing: route.Plan{
 			Device:             deviceName,
@@ -234,16 +236,46 @@ func newTrafficPlan(gatewayHost string, gatewayConfig gp.GatewayConfig, extraDom
 			LocalNetworkAccess: gatewayConfig.LocalNetworkAccess,
 		},
 		dns:      dns.Settings{Device: deviceName, Servers: gatewayConfig.DNSServers, Suffixes: gatewayConfig.DNSSuffixes},
-		excluded: excluded,
 		clientIP: net.ParseIP(gatewayConfig.ClientIP),
 	}
-	if !excluded.Empty() {
-		plan.routing.ExcludeMark = exclude.Mark
+	if settings.IncludeOnly() {
+		return plan.includeOnly(settings)
+	}
+	plan.domains = split.NewDomains(append(gatewayConfig.ExcludeDomains, settings.ExcludeDomains...))
+	plan.direction = split.Around
+	if !plan.domains.Empty() {
+		plan.routing.ExcludeMark = split.Mark
 	}
 	return plan, nil
 }
 
-// apply installs the routes, the exclude-domain forwarder and the DNS settings on the tunnel
+// includeOnly limits the tunnel to the configured routes and domains, and to the tunnel's DNS
+// servers, which answer for the domains and the gateway's DNS suffixes. Every other name is
+// resolved, and every other address reached, outside the tunnel.
+func (plan trafficPlan) includeOnly(settings config.Config) (trafficPlan, error) {
+	only, err := parseIncludeRoutes(settings.IncludeRoutes)
+	if err != nil {
+		return trafficPlan{}, err
+	}
+	for _, server := range plan.dns.Servers {
+		if address := net.ParseIP(server).To4(); address != nil {
+			only = append(only, route.HostPrefix(address))
+		}
+	}
+	plan.routing.IncludeOnly = true
+	plan.routing.IncludeRoutes = []*net.IPNet{{IP: net.IPv4zero.To4(), Mask: net.CIDRMask(0, 32)}}
+	plan.routing.OnlyRoutes = only
+	plan.domains = split.NewDomains(settings.IncludeDomains)
+	plan.direction = split.Through
+	plan.dns.Selective = true
+	if !plan.domains.Empty() {
+		plan.routing.OnlyMark = split.Mark
+		plan.dns.RoutingDomains = plan.domains.RoutingDomains()
+	}
+	return plan, nil
+}
+
+// apply installs the routes, the split-domain forwarder and the DNS settings on the tunnel
 // device, and returns how to undo them in reverse order.
 func (plan trafficPlan) apply() (undo func(), err error) {
 	var undoSteps []func() error
@@ -269,14 +301,14 @@ func (plan trafficPlan) apply() (undo func(), err error) {
 	undoSteps = append(undoSteps, routing.Remove)
 
 	dnsSettings := plan.dns
-	if !plan.excluded.Empty() {
-		firewall, err := exclude.InstallFirewall(plan.routing.Device)
+	if !plan.domains.Empty() {
+		firewall, err := split.InstallFirewall(plan.routing.Device, plan.direction)
 		if err != nil {
 			return nil, err
 		}
 		undoSteps = append(undoSteps, firewall.Remove)
 
-		forwarder, err := exclude.StartForwarder(plan.clientIP, plan.dns.Servers, plan.excluded, firewall)
+		forwarder, err := split.StartForwarder(plan.clientIP, plan.dns.Servers, plan.domains, firewall)
 		if err != nil {
 			return nil, err
 		}
@@ -293,12 +325,20 @@ func (plan trafficPlan) apply() (undo func(), err error) {
 }
 
 func (plan trafficPlan) String() string {
-	var routes []string
-	for _, destination := range plan.routing.IncludeRoutes {
-		routes = append(routes, destination.String())
+	if plan.routing.IncludeOnly {
+		return fmt.Sprintf("include only: routes %s, %d include domains, DNS %s",
+			joinPrefixes(plan.routing.OnlyRoutes), plan.domains.Count(), strings.Join(plan.dns.Servers, " "))
 	}
 	return fmt.Sprintf("routes %s, DNS %s, %d exclude routes, %d exclude domains",
-		strings.Join(routes, " "), strings.Join(plan.dns.Servers, " "), len(plan.routing.ExcludeRoutes), plan.excluded.Count())
+		joinPrefixes(plan.routing.IncludeRoutes), strings.Join(plan.dns.Servers, " "), len(plan.routing.ExcludeRoutes), plan.domains.Count())
+}
+
+func joinPrefixes(prefixes []*net.IPNet) string {
+	var joined []string
+	for _, prefix := range prefixes {
+		joined = append(joined, prefix.String())
+	}
+	return strings.Join(joined, " ")
 }
 
 // gatewayAddresses lists every public address of the gateway, so none of them is routed into the tunnel.
@@ -328,6 +368,23 @@ func parseCIDRs(cidrs []string) ([]*net.IPNet, error) {
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
 			return nil, fmt.Errorf("route %q: %w", cidr, err)
+		}
+		parsed = append(parsed, network)
+	}
+	return parsed, nil
+}
+
+// parseIncludeRoutes reads IPv4 addresses and CIDR ranges.
+func parseIncludeRoutes(entries []string) ([]*net.IPNet, error) {
+	var parsed []*net.IPNet
+	for _, entry := range entries {
+		cidr := strings.TrimSpace(entry)
+		if !strings.Contains(cidr, "/") {
+			cidr += "/32"
+		}
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil || network.IP.To4() == nil {
+			return nil, fmt.Errorf("include route %q: want an IPv4 address or CIDR range", entry)
 		}
 		parsed = append(parsed, network)
 	}

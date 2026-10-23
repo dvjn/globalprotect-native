@@ -28,3 +28,13 @@ hip:
 # exclude_domains:
 #   - "*.example.com"
 #   - www.example.org
+
+# Send only these domains and IPv4 addresses or ranges through the tunnel, and everything
+# else outside it. Setting either list replaces the gateway's split tunneling and
+# exclude_domains.
+# include_domains:
+#   - "*.corp.example.com"
+#   - jira.example.com
+# include_routes:
+#   - 10.0.0.0/8
+#   - 192.0.2.7
