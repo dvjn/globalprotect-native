@@ -1,4 +1,4 @@
-# nfpm builds the rpm and deb from this file: `mise run package`.
+# nfpm builds the packages from this file: `mise run package`.
 # Paths are relative to the repository root.
 name: globalprotect-native
 arch: amd64
@@ -23,6 +23,12 @@ overrides:
   deb:
     depends: [nftables, systemd, xdg-utils]
     recommends: [libnotify-bin]
+  archlinux:
+    depends: [nftables, systemd, xdg-utils]
+    recommends: [libnotify]
+    scripts:
+      postinstall: packaging/scripts/archlinux/postinstall.sh
+      preremove: packaging/scripts/archlinux/preremove.sh
 
 contents:
   - src: bin/gpn
@@ -49,3 +55,8 @@ scripts:
   postinstall: packaging/scripts/postinstall.sh
   preremove: packaging/scripts/preremove.sh
   postremove: packaging/scripts/postremove.sh
+
+archlinux:
+  packager: dvjn <git@dvjn.dev>
+  scripts:
+    postupgrade: packaging/scripts/archlinux/postupgrade.sh

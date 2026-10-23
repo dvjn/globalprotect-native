@@ -41,5 +41,6 @@ jobs:
           path: |
             dist/*.rpm
             dist/*.deb
+            dist/*.pkg.tar.zst
             dist/SHA256SUMS
           if-no-files-found: error

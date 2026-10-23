@@ -25,11 +25,12 @@ run = [
 ]
 
 [tasks.package]
-description = "Build the rpm and deb into dist/"
+description = "Build the packages into dist/"
 depends = ["build"]
 run = [
   "mkdir -p dist",
   "nfpm package --config packaging/nfpm.yaml --packager rpm --target dist/",
   "nfpm package --config packaging/nfpm.yaml --packager deb --target dist/",
-  "cd dist && sha256sum *.rpm *.deb > SHA256SUMS",
+  "nfpm package --config packaging/nfpm.yaml --packager archlinux --target dist/",
+  "cd dist && sha256sum *.rpm *.deb *.pkg.tar.zst > SHA256SUMS",
 ]
