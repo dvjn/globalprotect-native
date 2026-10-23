@@ -29,18 +29,46 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
 
-  assets:
-    name: 📦 Attach Release Assets
+  pacman-repo:
+    name: 🗃️ Build Pacman Database
     needs: package
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    container: archlinux:base
     steps:
       - name: ⬇️ Download Packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: packages
           path: dist
+      # pacman reads the latest release as a repository:
+      # Server = https://github.com/dvjn/globalprotect-native/releases/latest/download
+      # Release assets cannot be symlinks, so the database is saved under the names pacman asks for.
+      - name: 🗃️ Build Database
+        working-directory: dist
+        run: |
+          repo-add -q repo.db.tar.gz *.pkg.tar.zst
+          mkdir ../repo
+          cp repo.db.tar.gz ../repo/globalprotect-native.db
+          cp repo.files.tar.gz ../repo/globalprotect-native.files
+      - name: ⬆️ Upload Database
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pacman-repo
+          path: repo/*
+          if-no-files-found: error
+
+  assets:
+    name: 📦 Attach Release Assets
+    needs: [package, pacman-repo]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: ⬇️ Download Packages and Database
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
       # Without name, body or prerelease inputs, the release keeps the text release-please wrote.
       - name: ⬆️ Upload Packages
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -50,5 +78,7 @@ jobs:
             dist/*.rpm
             dist/*.deb
             dist/*.pkg.tar.zst
+            dist/globalprotect-native.db
+            dist/globalprotect-native.files
             dist/SHA256SUMS
           fail_on_unmatched_files: true
