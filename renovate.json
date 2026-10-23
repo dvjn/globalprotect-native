@@ -12,6 +12,16 @@
       "matchDatasources": ["go"],
       "groupName": "go modules",
       "separateMajorMinor": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "separateMajorMinor": false
+    },
+    {
+      "matchManagers": ["mise"],
+      "groupName": "mise tools",
+      "separateMajorMinor": false
     }
   ],
   "dependencyDashboard": true
