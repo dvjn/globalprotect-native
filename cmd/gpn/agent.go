@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -66,6 +67,13 @@ func followDaemon(ctx context.Context, last *control.Status, statusIcon *tray) e
 		}
 		status := *response.Status
 		statusIcon.show(status)
+		if status.Update.Available != last.Update.Available && status.Update.Available != "" && !status.Update.Installing {
+			go offerUpdate(status.Update.Available)
+		}
+		if status.Update.Error != last.Update.Error && status.Update.Error != "" {
+			notify("GlobalProtect update failed", status.Update.Error)
+		}
+		last.Update = status.Update
 		if status.State == last.State && status.Gateway == last.Gateway {
 			continue
 		}
@@ -94,6 +102,31 @@ func announce(previous, current control.Status) {
 			notify("GlobalProtect disconnected", "")
 		}
 	}
+}
+
+// offerUpdate shows a notification about a newer release with a button that installs it.
+// notify-send without --action, before libnotify 0.7.10, gets a plain notification instead.
+func offerUpdate(version string) {
+	summary, body := "GlobalProtect update available", fmt.Sprintf("Version %s is out.", version)
+	fmt.Fprintln(os.Stderr, summary+":", body)
+	output, err := exec.Command("notify-send", "--app-name=gpn", "--action=update=Update", "--wait", summary, body).Output()
+	if err != nil {
+		notify(summary, body+" Update from the tray menu or with `gpn update`.")
+		return
+	}
+	if strings.TrimSpace(string(output)) == "update" {
+		requestUpdate()
+	}
+}
+
+// requestUpdate asks the daemon to install the latest release and shows its answer.
+func requestUpdate() {
+	response, err := control.Call(control.Request{Command: control.CommandUpdate})
+	if err != nil {
+		notify("GlobalProtect update failed", err.Error())
+		return
+	}
+	notify("GlobalProtect update", response.Update)
 }
 
 func notify(summary, body string) {

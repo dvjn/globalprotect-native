@@ -16,6 +16,7 @@ Commands for the active desktop session and members of the gpn group:
   reconnect          Rebuild the tunnel now, or connect if it is down
   status             Show the tunnel state
   login              Log in through the browser
+  update             Install the latest release with the package manager that installed gpn
   agent              Tray icon, notifications and browser logins for the desktop session
   callback <uri>     Receive a globalprotectcallback: URI from the browser
 
@@ -54,6 +55,8 @@ func main() {
 		err = runStatus(args)
 	case "login":
 		err = runLogin(args)
+	case "update":
+		err = runUpdate(args)
 	case "agent":
 		err = runAgent(args)
 	case "callback":

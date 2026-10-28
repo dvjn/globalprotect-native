@@ -24,6 +24,7 @@ const (
 	CommandReconnect  = "reconnect"
 	CommandPrelogin   = "prelogin"
 	CommandLogin      = "login"
+	CommandUpdate     = "update"
 )
 
 // States the daemon reports.
@@ -46,7 +47,7 @@ type Request struct {
 	Gateway  string `json:"gateway,omitempty"`
 }
 
-// Status is the daemon's view of the tunnel.
+// Status is the daemon's view of the tunnel and of updates.
 type Status struct {
 	State     string    `json:"state"`
 	Gateway   string    `json:"gateway,omitempty"`
@@ -54,14 +55,25 @@ type Status struct {
 	Transport string    `json:"transport,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	Since     time.Time `json:"since"`
+	Update    Update    `json:"update,omitzero"`
 }
 
-// Response answers a request. LoginPage and LoginTimeout answer "prelogin".
+// Update is what the daemon knows of releases. Available is a newer release's version,
+// Installing is set from its download until the daemon restarts, and Error says why the last
+// update failed.
+type Update struct {
+	Available  string `json:"available,omitempty"`
+	Installing bool   `json:"installing,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// Response answers a request. LoginPage and LoginTimeout answer "prelogin", Update "update".
 type Response struct {
 	Error        string        `json:"error,omitempty"`
 	Status       *Status       `json:"status,omitempty"`
 	LoginPage    []byte        `json:"login_page,omitempty"`
 	LoginTimeout time.Duration `json:"login_timeout,omitempty"`
+	Update       string        `json:"update,omitempty"`
 }
 
 // SocketPath is the socket clients connect to.

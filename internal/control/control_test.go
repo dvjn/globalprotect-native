@@ -87,3 +87,28 @@ func TestLoginPageSurvivesJSON(t *testing.T) {
 		t.Errorf("got %q, %s", response.LoginPage, response.LoginTimeout)
 	}
 }
+
+func TestUpdateSurvivesJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	t.Setenv("GPN_SOCKET", path)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	update := Update{Available: "0.3.0", Installing: true, Error: "the installer failed"}
+	go func() {
+		connection, _ := listener.Accept()
+		defer connection.Close()
+		ReadRequest(bufio.NewReader(connection))
+		WriteResponse(connection, Response{Status: &Status{State: StateConnected, Update: update}, Update: "Installing 0.3.0"})
+	}()
+
+	response, err := Call(Request{Command: CommandUpdate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Status.Update != update || response.Update != "Installing 0.3.0" {
+		t.Errorf("got %+v, %q", response.Status.Update, response.Update)
+	}
+}

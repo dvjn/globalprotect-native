@@ -19,14 +19,14 @@ func TestLoadMissingFileReturnsDefault(t *testing.T) {
 
 func TestLoadKeepsDefaultsForMissingKeys(t *testing.T) {
 	config := loadText(t, "portal: vpn.example.com\n")
-	if config.Portal != "vpn.example.com" || !config.AutoConnect || !config.DeviceIdentity || !config.HIP.Send {
+	if config.Portal != "vpn.example.com" || !config.AutoConnect || !config.DeviceIdentity || !config.CheckUpdates || !config.HIP.Send {
 		t.Errorf("got %+v", config)
 	}
 }
 
 func TestLoadSwitchesOff(t *testing.T) {
-	config := loadText(t, "auto_connect: false\ndevice_identity: false\nhip:\n  send: false\n")
-	if config.AutoConnect || config.DeviceIdentity || config.HIP.Send {
+	config := loadText(t, "auto_connect: false\ndevice_identity: false\ncheck_updates: false\nhip:\n  send: false\n")
+	if config.AutoConnect || config.DeviceIdentity || config.CheckUpdates || config.HIP.Send {
 		t.Errorf("got %+v, want every switch off", config)
 	}
 }

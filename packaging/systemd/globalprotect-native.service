@@ -15,6 +15,8 @@ RuntimeDirectory=globalprotect-native
 StateDirectory=globalprotect-native
 StateDirectoryMode=0700
 ConfigurationDirectory=globalprotect-native
+CacheDirectory=globalprotect-native
+CacheDirectoryMode=0700
 
 NoNewPrivileges=yes
 PrivateTmp=yes

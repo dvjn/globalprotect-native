@@ -34,7 +34,9 @@ type Config struct {
 	// addresses or CIDR ranges.
 	IncludeDomains []string `yaml:"include_domains,omitempty"`
 	IncludeRoutes  []string `yaml:"include_routes,omitempty"`
-	HIP            HIP      `yaml:"hip"`
+	// CheckUpdates checks GitHub for new releases and offers them to the desktop session.
+	CheckUpdates bool `yaml:"check_updates"`
+	HIP          HIP  `yaml:"hip"`
 }
 
 // IncludeOnly reports whether only the included domains and routes go through the tunnel.
@@ -49,7 +51,7 @@ type HIP struct {
 
 // Default is the configuration used when the file does not exist.
 func Default() Config {
-	return Config{AutoConnect: true, DeviceIdentity: true, HIP: HIP{Send: true}}
+	return Config{AutoConnect: true, DeviceIdentity: true, CheckUpdates: true, HIP: HIP{Send: true}}
 }
 
 // Load reads the file at path, falling back to Default for anything it leaves out.

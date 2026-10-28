@@ -67,13 +67,19 @@ func runDaemon(args []string) error {
 	}
 	go server.serve(listener)
 	fmt.Fprintf(os.Stderr, "Listening on %s for root, members of %s and polkit action %s.\n", *socketPath, *groupName, controlAction)
-	if envErr == nil && env.settings.AutoConnect && env.portalKnown() {
-		fmt.Fprintln(os.Stderr, "Connecting, as auto_connect asks.")
-		server.connect("")
+	if envErr == nil && env.portalKnown() {
+		if userHome, found := takeReconnectMarker(env.statePath); found {
+			fmt.Fprintln(os.Stderr, "Connecting again after the update.")
+			server.connect(userHome)
+		} else if env.settings.AutoConnect {
+			fmt.Fprintln(os.Stderr, "Connecting, as auto_connect asks.")
+			server.connect("")
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go server.watchUpdates(ctx)
 	go func() {
 		err := watchResume(ctx, func() {
 			if server.restart() {
@@ -85,6 +91,7 @@ func runDaemon(args []string) error {
 		}
 	}()
 	<-ctx.Done()
+	server.rememberTunnel()
 	server.disconnect()
 	return nil
 }
@@ -148,6 +155,9 @@ type daemon struct {
 	restartTunnel context.CancelFunc
 	// userHome belongs to the user who last asked to connect.
 	userHome string
+	// updating is held while an update is checked and downloaded.
+	updating sync.Mutex
+	releases control.Update
 }
 
 func (server *daemon) serve(listener net.Listener) {
@@ -207,6 +217,16 @@ func (server *daemon) handle(connection net.Conn) {
 		control.WriteResponse(connection, control.Response{LoginPage: page, LoginTimeout: timeout})
 	case control.CommandLogin:
 		server.respond(connection, server.login(ctx, request.Username, request.Token))
+	case control.CommandUpdate:
+		message, install, err := server.prepareUpdate()
+		if err != nil {
+			control.WriteResponse(connection, control.Response{Error: err.Error()})
+			return
+		}
+		control.WriteResponse(connection, control.Response{Update: message})
+		if install != nil {
+			go install()
+		}
 	default:
 		control.WriteResponse(connection, control.Response{Error: fmt.Sprintf("unknown command %q", request.Command)})
 	}
@@ -333,7 +353,26 @@ func (server *daemon) setStatus(status control.Status) {
 
 func (server *daemon) setStatusLocked(status control.Status) {
 	status.Since = time.Now()
+	status.Update = server.releases
 	server.status = status
+	server.broadcastLocked()
+}
+
+// changeReleases changes what the status says about updates.
+func (server *daemon) changeReleases(change func(*control.Update)) {
+	server.lock.Lock()
+	defer server.lock.Unlock()
+	before := server.releases
+	change(&server.releases)
+	if server.releases == before {
+		return
+	}
+	server.status.Update = server.releases
+	server.broadcastLocked()
+}
+
+func (server *daemon) broadcastLocked() {
+	status := server.status
 	for updates := range server.watchers {
 		select {
 		case updates <- status:

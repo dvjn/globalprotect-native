@@ -19,6 +19,11 @@ device_identity: true
 # Skip ESP and always use the SSL tunnel.
 ssl_only: false
 
+# Check GitHub for a new release every few hours and offer it in a notification and the tray
+# menu. Updating, from there or with `gpn update`, installs it with the package manager that
+# installed gpn; the daemon restarts, and a connected tunnel comes back.
+check_updates: true
+
 # Send a host information profile report when the gateway asks for one.
 hip:
   send: true

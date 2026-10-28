@@ -40,6 +40,7 @@ type tray struct {
 	connect    *systray.MenuItem
 	reconnect  *systray.MenuItem
 	disconnect *systray.MenuItem
+	update     *systray.MenuItem
 	end        func()
 }
 
@@ -53,12 +54,19 @@ func startTray(ctx context.Context) *tray {
 		connect:    systray.AddMenuItem("Connect", ""),
 		reconnect:  systray.AddMenuItem("Reconnect", ""),
 		disconnect: systray.AddMenuItem("Disconnect", ""),
+		update:     systray.AddMenuItem("", ""),
 		end:        end,
 	}
 	t.summary.Disable()
+	t.update.Hide()
 	go t.connectOnClick(ctx)
 	go sendOnClick(t.reconnect, control.CommandReconnect)
 	go sendOnClick(t.disconnect, control.CommandDisconnect)
+	go func() {
+		for range t.update.ClickedCh {
+			requestUpdate()
+		}
+	}()
 
 	t.showUnavailable()
 	return t
@@ -73,6 +81,18 @@ func (t *tray) show(status control.Status) {
 	setEnabled(t.connect, status.State == control.StateDisconnected || status.State == control.StateFailed || status.State == control.StateNeedsLogin)
 	setEnabled(t.reconnect, status.State == control.StateConnected)
 	setEnabled(t.disconnect, status.State != control.StateDisconnected)
+	switch {
+	case status.Update.Installing:
+		t.update.SetTitle("Updating to " + status.Update.Available + "…")
+		t.update.Disable()
+		t.update.Show()
+	case status.Update.Available != "":
+		t.update.SetTitle("Update to " + status.Update.Available)
+		t.update.Enable()
+		t.update.Show()
+	default:
+		t.update.Hide()
+	}
 }
 
 func (t *tray) showUnavailable() {
@@ -84,6 +104,7 @@ func (t *tray) showUnavailable() {
 	for _, item := range []*systray.MenuItem{t.connect, t.reconnect, t.disconnect} {
 		item.Disable()
 	}
+	t.update.Hide()
 }
 
 // connectOnClick connects, or opens the browser login when the daemon is waiting for one.
