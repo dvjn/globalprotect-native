@@ -9,8 +9,9 @@ VERSION = "0.2.0" # x-release-please-version
 # A static binary runs on any distribution the packages target. Without cgo, user and group
 # lookups read /etc/passwd and /etc/group only, not SSSD or LDAP.
 CGO_ENABLED = "0"
-# Android Studio's SDK Manager installs the SDK and the NDK here.
-ANDROID_HOME = "{{env.HOME}}/Android/Sdk"
+# Android Studio's SDK Manager installs the SDK and the NDK here, unless ANDROID_HOME says
+# otherwise, as on CI runners.
+ANDROID_HOME = "{{ get_env(name='ANDROID_HOME', default=env.HOME ~ '/Android/Sdk') }}"
 
 [tasks.build]
 description = "Build bin/gpn"
@@ -53,6 +54,15 @@ description = "Build the Android app's debug APK, with the Go core"
 depends = ["android:core"]
 dir = "android"
 run = "./gradlew --console=plain assembleDebug"
+
+[tasks."android:release"]
+description = "Build the Android app's release APK into dist/, signed with GPN_KEYSTORE when it is set"
+depends = ["android:core"]
+run = [
+  "cd android && ./gradlew --console=plain assembleRelease",
+  "mkdir -p dist",
+  "cp android/app/build/outputs/apk/release/app-release*.apk dist/globalprotect-native-$VERSION.apk",
+]
 
 [tasks."android:install"]
 description = "Install the debug APK on the connected device and open it"

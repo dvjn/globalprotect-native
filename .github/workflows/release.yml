@@ -29,6 +29,45 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
 
+  android:
+    name: 📱 Build Android App
+    runs-on: ubuntu-latest
+    env:
+      GPN_KEYSTORE_BASE64: ${{ secrets.GPN_KEYSTORE_BASE64 }}
+    steps:
+      - name: 📥 Checkout
+        if: env.GPN_KEYSTORE_BASE64 != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 🧰 Install Tools
+        if: env.GPN_KEYSTORE_BASE64 != ''
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - name: 🧭 Use the Latest NDK
+        if: env.GPN_KEYSTORE_BASE64 != ''
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      # Every release is signed with the same key, so installed apps update in place.
+      - name: 🔑 Restore the Signing Key
+        if: env.GPN_KEYSTORE_BASE64 != ''
+        run: |
+          echo "$GPN_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "GPN_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: 🏗️ Build the APK
+        if: env.GPN_KEYSTORE_BASE64 != ''
+        env:
+          GPN_KEYSTORE_PASSWORD: ${{ secrets.GPN_KEYSTORE_PASSWORD }}
+          GPN_KEY_ALIAS: ${{ secrets.GPN_KEY_ALIAS }}
+          GPN_KEY_PASSWORD: ${{ secrets.GPN_KEY_PASSWORD }}
+        run: mise run android:release
+      - name: ⬆️ Upload the APK
+        if: env.GPN_KEYSTORE_BASE64 != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+      - name: ⚠️ No Signing Key
+        if: env.GPN_KEYSTORE_BASE64 == ''
+        run: echo "::warning::GPN_KEYSTORE_BASE64 is not set, so this release has no Android APK."
+
   pacman-repo:
     name: 🗃️ Build Pacman Database
     needs: package
@@ -59,7 +98,7 @@ jobs:
 
   assets:
     name: 📦 Attach Release Assets
-    needs: [package, pacman-repo]
+    needs: [package, pacman-repo, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -69,6 +108,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: 🔢 Add the APK's Checksum
+        working-directory: dist
+        run: |
+          for apk in ./*.apk; do
+            if [ -e "$apk" ]; then sha256sum "${apk#./}" >> SHA256SUMS; fi
+          done
       # Without name, body or prerelease inputs, the release keeps the text release-please wrote.
       - name: ⬆️ Upload Packages
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -82,3 +127,9 @@ jobs:
             dist/globalprotect-native.files
             dist/SHA256SUMS
           fail_on_unmatched_files: true
+      - name: ⬆️ Upload the APK
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*.apk
+          fail_on_unmatched_files: false
