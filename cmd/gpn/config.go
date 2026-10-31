@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 
+	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/gp"
 )
 
@@ -15,11 +16,11 @@ import (
 // so it runs as root.
 func runConfig(args []string) error {
 	flags := flag.NewFlagSet("config", flag.ExitOnError)
-	loadEnvironment := environmentFlags(flags)
+	loadProfile := profileFlags(flags)
 	captureDir := flags.String("capture", "", "write the redacted gateway config XML to this directory")
 	keepSession := flags.Bool("keep-session", false, "do not log out of the gateway afterwards")
 	flags.Parse(args)
-	env, err := loadEnvironment()
+	profile, err := loadProfile()
 	if err != nil {
 		return err
 	}
@@ -27,15 +28,19 @@ func runConfig(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	opened, err := openGatewaySession(ctx, env)
+	login, err := profile.Login()
+	if err != nil {
+		return err
+	}
+	opened, err := engine.OpenSession(ctx, login, nil, logger)
 	if err != nil {
 		return err
 	}
 	if !*keepSession {
-		defer opened.logOut()
+		defer opened.LogOut()
 	}
 
-	config, raw, err := opened.client.GatewayGetConfig(ctx, opened.session)
+	config, raw, err := opened.Client.GatewayGetConfig(ctx, opened.Session)
 	if *captureDir != "" && raw != nil {
 		if err := writeCapture(*captureDir, "gateway-config.xml", raw); err != nil {
 			return err
@@ -45,7 +50,7 @@ func runConfig(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Gateway: %s (%s)\n", opened.gateway.Name, opened.gateway.Address)
+	fmt.Printf("Gateway: %s (%s)\n", opened.Gateway.Name, opened.Gateway.Address)
 	printGatewayConfig(config)
 	return nil
 }

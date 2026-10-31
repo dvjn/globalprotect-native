@@ -51,7 +51,7 @@ func (server *daemon) watchUpdates(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		if env, err := server.loadEnvironment(); err == nil && env.settings.CheckUpdates {
+		if profile, err := server.loadProfile(); err == nil && profile.Settings.CheckUpdates {
 			if _, release, newer, err := server.latestRelease(ctx); err != nil {
 				fmt.Fprintln(os.Stderr, "Could not look for an update:", err)
 			} else {
@@ -170,9 +170,9 @@ func (server *daemon) rememberTunnel() {
 	if !remember {
 		return
 	}
-	env, err := server.loadEnvironment()
+	profile, err := server.loadProfile()
 	if err == nil {
-		err = os.WriteFile(reconnectMarker(env.statePath), []byte(userHome), 0o600)
+		err = os.WriteFile(reconnectMarker(profile.StatePath), []byte(userHome), 0o600)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "The tunnel will not come back after the update:", err)

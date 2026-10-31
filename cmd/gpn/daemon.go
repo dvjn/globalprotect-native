@@ -21,21 +21,23 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/dvjn/globalprotect-native/internal/config"
 	"github.com/dvjn/globalprotect-native/internal/control"
+	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/gp"
-	"github.com/dvjn/globalprotect-native/internal/state"
+	"github.com/dvjn/globalprotect-native/internal/profile"
 )
 
 // runDaemon serves the control socket and owns the tunnel. It runs as root.
 func runDaemon(args []string) error {
 	flags := flag.NewFlagSet("daemon", flag.ExitOnError)
-	loadEnvironment := environmentFlags(flags)
+	loadProfile := profileFlags(flags)
 	socketPath := flags.String("socket", control.DefaultSocket, "control socket")
 	groupName := flags.String("group", "gpn", "group whose members may control the daemon from any session")
 	flags.Parse(args)
-	env, envErr := loadEnvironment()
-	if envErr != nil {
-		fmt.Fprintln(os.Stderr, "Settings are invalid; connecting will fail until they are fixed:", envErr)
+	profile, profileErr := loadProfile()
+	if profileErr != nil {
+		fmt.Fprintln(os.Stderr, "Settings are invalid; connecting will fail until they are fixed:", profileErr)
 	}
 	if os.Geteuid() != 0 {
 		return errors.New("the daemon manages network devices; run it as root")
@@ -60,18 +62,18 @@ func runDaemon(args []string) error {
 	defer listener.Close()
 
 	server := &daemon{
-		loadEnvironment: loadEnvironment,
-		allowedGroups:   allowedGroups,
-		status:          control.Status{State: control.StateDisconnected, Since: time.Now()},
-		watchers:        map[chan control.Status]bool{},
+		loadProfile:   loadProfile,
+		allowedGroups: allowedGroups,
+		status:        control.Status{State: control.StateDisconnected, Since: time.Now()},
+		watchers:      map[chan control.Status]bool{},
 	}
 	go server.serve(listener)
 	fmt.Fprintf(os.Stderr, "Listening on %s for root, members of %s and polkit action %s.\n", *socketPath, *groupName, controlAction)
-	if envErr == nil && env.portalKnown() {
-		if userHome, found := takeReconnectMarker(env.statePath); found {
+	if profileErr == nil && profile.PortalKnown() {
+		if userHome, found := takeReconnectMarker(profile.StatePath); found {
 			fmt.Fprintln(os.Stderr, "Connecting again after the update.")
 			server.connect(userHome)
-		} else if env.settings.AutoConnect {
+		} else if profile.Settings.AutoConnect {
 			fmt.Fprintln(os.Stderr, "Connecting, as auto_connect asks.")
 			server.connect("")
 		}
@@ -140,9 +142,9 @@ func listenControl(path string) (net.Listener, error) {
 }
 
 type daemon struct {
-	// loadEnvironment reads the settings file afresh, so a reconnect applies edits to it.
-	loadEnvironment func() (environment, error)
-	allowedGroups   []uint32
+	// loadProfile reads the settings file afresh, so a reconnect applies edits to it.
+	loadProfile   func() (profile.Profile, error)
+	allowedGroups []uint32
 
 	lock     sync.Mutex
 	status   control.Status
@@ -151,8 +153,8 @@ type daemon struct {
 	// both are nil while no tunnel runs.
 	stop     context.CancelFunc
 	finished chan struct{}
-	// restartTunnel ends the current attempt so the run loop builds a new tunnel at once.
-	restartTunnel context.CancelFunc
+	// supervisor keeps the running tunnel up.
+	supervisor *engine.Supervisor
 	// userHome belongs to the user who last asked to connect.
 	userHome string
 	// updating is held while an update is checked and downloaded.
@@ -391,95 +393,63 @@ func (server *daemon) connect(userHome string) error {
 
 	ctx, stop := context.WithCancel(context.Background())
 	finished := make(chan struct{})
-	server.stop, server.finished, server.userHome = stop, finished, userHome
+	supervisor := &engine.Supervisor{
+		Prepare:  server.prepareTunnel,
+		Platform: linuxPlatform{userHome: userHome},
+		Log:      logger,
+		OnConnected: func(connected engine.Connected) {
+			server.setStatus(control.Status{
+				State:     control.StateConnected,
+				Gateway:   connected.Gateway,
+				ClientIP:  connected.ClientIP,
+				Transport: connected.Transport,
+			})
+		},
+		OnReconnecting: func(reason string) {
+			server.setStatus(control.Status{State: control.StateReconnecting, Error: reason})
+		},
+	}
+	server.stop, server.finished, server.supervisor, server.userHome = stop, finished, supervisor, userHome
 	server.setStatusLocked(control.Status{State: control.StateConnecting})
-	go server.run(ctx, finished, userHome)
+	go server.run(ctx, finished, supervisor)
 	return nil
 }
 
-// reconnectDelays are the waits between failed attempts; the last one repeats.
-var reconnectDelays = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, time.Minute}
-
-// stableAfter is how long a tunnel has to hold before a later failure starts the delays over.
-const stableAfter = time.Minute
-
-// run keeps a tunnel up until ctx ends or the portal wants a new login. A tunnel that fails is
-// built again after a delay; one that needs rebuilding (rekey, network change, resume) at once.
-func (server *daemon) run(ctx context.Context, finished chan struct{}, userHome string) {
+// run keeps a tunnel up until ctx ends or retrying cannot help, and then records why it stopped.
+func (server *daemon) run(ctx context.Context, finished chan struct{}, supervisor *engine.Supervisor) {
+	err := supervisor.Run(ctx)
 	final := control.Status{State: control.StateDisconnected}
-	defer func() {
-		server.lock.Lock()
-		defer server.lock.Unlock()
-		server.stop, server.finished, server.restartTunnel = nil, nil, nil
-		close(finished)
-		server.setStatusLocked(final)
-	}()
-
-	failures := 0
-	for {
-		attempt, restart := context.WithCancel(ctx)
-		server.lock.Lock()
-		server.restartTunnel = restart
-		server.lock.Unlock()
-
-		env, err := server.loadEnvironment()
-		if err != nil {
-			restart()
-			final = control.Status{State: control.StateFailed, Error: err.Error()}
-			return
-		}
-		var connectedAt time.Time
-		err = runTunnel(attempt, env, tunnelOptions{
-			userHome: userHome,
-			onConnected: func(status control.Status) {
-				connectedAt = time.Now()
-				server.setStatus(status)
-			},
-		})
-		restart()
-
-		switch {
-		case ctx.Err() != nil:
-			return
-		case errors.Is(err, gp.ErrAuthenticationRejected):
-			final = control.Status{State: control.StateNeedsLogin, Error: err.Error()}
-			return
-		case errors.Is(err, errNotConfigured):
-			final = control.Status{State: control.StateFailed, Error: err.Error()}
-			return
-		}
-
-		if !connectedAt.IsZero() && time.Since(connectedAt) > stableAfter {
-			failures = 0
-		}
-		var delay time.Duration
-		reason := "restart requested"
-		if err != nil {
-			reason = err.Error()
-			if !needsRebuild(err) {
-				delay = reconnectDelays[min(failures, len(reconnectDelays)-1)]
-				failures++
-			}
-		}
-		fmt.Fprintf(os.Stderr, "Reconnecting in %s: %s\n", delay, reason)
-		server.setStatus(control.Status{State: control.StateReconnecting, Error: reason})
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(delay):
-		}
+	switch {
+	case errors.Is(err, gp.ErrAuthenticationRejected):
+		final = control.Status{State: control.StateNeedsLogin, Error: err.Error()}
+	case err != nil:
+		final = control.Status{State: control.StateFailed, Error: err.Error()}
 	}
+
+	server.lock.Lock()
+	defer server.lock.Unlock()
+	server.stop, server.finished, server.supervisor = nil, nil, nil
+	close(finished)
+	server.setStatusLocked(final)
+}
+
+// prepareTunnel reads the settings and the saved login afresh for the next tunnel.
+func (server *daemon) prepareTunnel() (engine.Login, config.Config, error) {
+	profile, err := server.loadProfile()
+	if err != nil {
+		return engine.Login{}, config.Config{}, engine.Permanent(err)
+	}
+	login, err := profile.Login()
+	return login, profile.Settings, err
 }
 
 // restart rebuilds a running tunnel at once, as after resume. It reports whether one was running.
 func (server *daemon) restart() bool {
 	server.lock.Lock()
 	defer server.lock.Unlock()
-	if server.restartTunnel == nil {
+	if server.supervisor == nil || !server.supervisor.Restart() {
 		return false
 	}
-	server.restartTunnel()
 	server.setStatusLocked(control.Status{State: control.StateReconnecting, Error: "restart requested"})
 	return true
 }
@@ -497,59 +467,34 @@ func (server *daemon) disconnect() {
 }
 
 func (server *daemon) saveChoice(portal, gateway string) error {
-	env, err := server.loadEnvironment()
+	profile, err := server.loadProfile()
 	if err != nil {
 		return err
 	}
-	return env.saveChoice(portal, gateway)
+	return profile.SaveChoice(portal, gateway)
 }
 
 // prelogin returns the portal's SAML page for the client to open in a browser.
 func (server *daemon) prelogin(ctx context.Context) ([]byte, time.Duration, error) {
-	env, err := server.loadEnvironment()
+	profile, err := server.loadProfile()
 	if err != nil {
 		return nil, 0, err
 	}
-	portal, _, err := env.portalClient()
-	if err != nil {
-		return nil, 0, err
-	}
-	prelogin, err := portal.PortalPrelogin(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-	if !prelogin.UsesCAS() {
-		return nil, 0, errors.New("portal does not use Cloud Authentication; only CAS login is supported")
-	}
-	page, err := prelogin.LoginPage()
-	return page, prelogin.LoginTimeout(), err
+	return profile.LoginPage(ctx)
 }
 
 // login exchanges the browser's token for a portal cookie and saves it. A tunnel that stopped
 // because it needed a login starts again.
 func (server *daemon) login(ctx context.Context, username, token string) error {
-	env, err := server.loadEnvironment()
+	profile, err := server.loadProfile()
 	if err != nil {
 		return err
 	}
-	portal, saved, err := env.portalClient()
+	portal, err := profile.SaveLogin(ctx, username, token)
 	if err != nil {
 		return err
 	}
-	portalConfig, _, err := portal.PortalGetConfig(ctx, gp.Credential{Username: username, Token: token})
-	if err != nil {
-		return err
-	}
-	saved.Portals[portal.Server] = state.PortalCookie{
-		Username:               username,
-		UserAuthCookie:         portalConfig.UserAuthCookie,
-		PrelogonUserAuthCookie: portalConfig.PrelogonUserAuthCookie,
-		SavedAt:                time.Now(),
-	}
-	if err := saved.Save(env.statePath); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "Logged in to %s as %s.\n", portal.Server, username)
+	fmt.Fprintf(os.Stderr, "Logged in to %s as %s.\n", portal, username)
 
 	server.lock.Lock()
 	resume := server.status.State == control.StateNeedsLogin

@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
-	"time"
 
-	"github.com/dvjn/globalprotect-native/internal/hip"
+	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/userdir"
 )
 
@@ -17,10 +15,10 @@ import (
 // It reads the daemon's files, so it runs as root.
 func runHIP(args []string) error {
 	flags := flag.NewFlagSet("hip", flag.ExitOnError)
-	loadEnvironment := environmentFlags(flags)
+	loadProfile := profileFlags(flags)
 	send := flags.Bool("send", false, "submit the report to the gateway instead of only printing it")
 	flags.Parse(args)
-	env, err := loadEnvironment()
+	profile, err := loadProfile()
 	if err != nil {
 		return err
 	}
@@ -32,23 +30,27 @@ func runHIP(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	opened, err := openGatewaySession(ctx, env)
+	login, err := profile.Login()
 	if err != nil {
 		return err
 	}
-	defer opened.logOut()
+	opened, err := engine.OpenSession(ctx, login, nil, logger)
+	if err != nil {
+		return err
+	}
+	defer opened.LogOut()
 
-	gatewayConfig, _, err := opened.client.GatewayGetConfig(ctx, opened.session)
+	gatewayConfig, _, err := opened.Client.GatewayGetConfig(ctx, opened.Session)
 	if err != nil {
 		return err
 	}
-	needed, err := opened.client.HIPReportNeeded(ctx, opened.session, gatewayConfig.ClientIP)
+	needed, err := opened.Client.HIPReportNeeded(ctx, opened.Session, gatewayConfig.ClientIP)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Gateway %s wants a HIP report: %t\n", opened.gateway.Name, needed)
+	fmt.Fprintf(os.Stderr, "Gateway %s wants a HIP report: %t\n", opened.Gateway.Name, needed)
 
-	report, err := buildHIPReport(opened, gatewayConfig.ClientIP, home)
+	report, err := engine.BuildHIPReport(opened, gatewayConfig.ClientIP, linuxPlatform{userHome: home})
 	if err != nil {
 		return err
 	}
@@ -58,58 +60,13 @@ func runHIP(args []string) error {
 		fmt.Fprintln(os.Stderr, "Not sent; pass --send to submit it.")
 		return nil
 	}
-	if err := opened.client.SubmitHIPReport(ctx, opened.session, gatewayConfig.ClientIP, report); err != nil {
+	if err := opened.Client.SubmitHIPReport(ctx, opened.Session, gatewayConfig.ClientIP, report); err != nil {
 		return err
 	}
-	needed, err = opened.client.HIPReportNeeded(ctx, opened.session, gatewayConfig.ClientIP)
+	needed, err = opened.Client.HIPReportNeeded(ctx, opened.Session, gatewayConfig.ClientIP)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Report accepted. Gateway still wants a report: %t\n", needed)
-	return nil
-}
-
-// buildHIPReport describes this machine. userHome is reported as a drive next to "/".
-func buildHIPReport(opened gatewaySession, clientIP, userHome string) ([]byte, error) {
-	sessionDomain := opened.session.Domain
-	if sessionDomain == "(empty_domain)" {
-		sessionDomain = ""
-	}
-	_, emailDomain, _ := strings.Cut(opened.session.Username, "@")
-
-	drives := []string{"/"}
-	if userHome != "" {
-		drives = append(drives, userHome)
-	}
-	return hip.Build(hip.Input{
-		MD5:           opened.session.HIPToken(),
-		Username:      opened.session.Username,
-		Domain:        sessionDomain,
-		HostDomain:    emailDomain,
-		Computer:      opened.session.Computer,
-		HostID:        opened.identity.HostID,
-		ClientIP:      clientIP,
-		ClientVersion: opened.identity.ClientVersion,
-		OS:            opened.identity.OSVersion,
-		Products:      hip.DetectProducts(),
-		Facts:         hip.CollectFacts(drives),
-		Now:           time.Now(),
-	})
-}
-
-// sendHIPReportIfNeeded submits a report when the gateway asks for one.
-func sendHIPReportIfNeeded(ctx context.Context, opened gatewaySession, clientIP, userHome string) error {
-	needed, err := opened.client.HIPReportNeeded(ctx, opened.session, clientIP)
-	if err != nil || !needed {
-		return err
-	}
-	report, err := buildHIPReport(opened, clientIP, userHome)
-	if err != nil {
-		return err
-	}
-	if err := opened.client.SubmitHIPReport(ctx, opened.session, clientIP, report); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "Sent the HIP report.")
 	return nil
 }

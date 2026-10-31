@@ -21,10 +21,11 @@ type SSL struct {
 	buffer     []byte
 }
 
-// DialSSL opens the tunnel at path on the gateway server for the session's user and auth cookie.
-func DialSSL(ctx context.Context, server, path, username, authCookie string) (*SSL, error) {
-	dialer := &tls.Dialer{Config: &tls.Config{ServerName: server}}
-	connection, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(server, "443"))
+// DialSSL opens the tunnel at path on the gateway server for the session's user and auth cookie,
+// connecting with dialer, or the default one when it is nil.
+func DialSSL(ctx context.Context, dialer *net.Dialer, server, path, username, authCookie string) (*SSL, error) {
+	tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{ServerName: server}}
+	connection, err := tlsDialer.DialContext(ctx, "tcp", net.JoinHostPort(server, "443"))
 	if err != nil {
 		return nil, err
 	}

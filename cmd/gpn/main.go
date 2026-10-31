@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -30,6 +31,9 @@ Commands for root:
 `
 
 var version = "dev"
+
+// logger writes progress to stderr, which systemd sends to the journal.
+var logger = log.New(os.Stderr, "", 0)
 
 func main() {
 	if len(os.Args) < 2 {

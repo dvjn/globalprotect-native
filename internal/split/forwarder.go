@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
-	"os"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -26,10 +26,12 @@ type Forwarder struct {
 	upstreams []string
 	domains   Domains
 	firewall  *Firewall
+	log       *log.Logger
 }
 
-// StartForwarder listens on address port 53 over UDP and TCP.
-func StartForwarder(address net.IP, upstreams []string, domains Domains, firewall *Firewall) (*Forwarder, error) {
+// StartForwarder listens on address port 53 over UDP and TCP, and tells logger about failed
+// queries.
+func StartForwarder(address net.IP, upstreams []string, domains Domains, firewall *Firewall, logger *log.Logger) (*Forwarder, error) {
 	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: address, Port: 53})
 	if err != nil {
 		return nil, fmt.Errorf("DNS forwarder: %w", err)
@@ -40,7 +42,7 @@ func StartForwarder(address net.IP, upstreams []string, domains Domains, firewal
 		return nil, fmt.Errorf("DNS forwarder: %w", err)
 	}
 
-	forwarder := &Forwarder{udp: udp, tcp: tcp, upstreams: upstreams, domains: domains, firewall: firewall}
+	forwarder := &Forwarder{udp: udp, tcp: tcp, upstreams: upstreams, domains: domains, firewall: firewall, log: logger}
 	go forwarder.serveUDP()
 	go forwarder.serveTCP()
 	return forwarder, nil
@@ -61,7 +63,7 @@ func (forwarder *Forwarder) serveUDP() {
 		go func(query []byte) {
 			answer, err := forwarder.exchange("udp", query)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "DNS forwarder:", err)
+				forwarder.log.Println("DNS forwarder:", err)
 				return
 			}
 			forwarder.udp.WriteToUDP(answer, client)
@@ -89,7 +91,7 @@ func (forwarder *Forwarder) serveTCPConnection(connection net.Conn) {
 		}
 		answer, err := forwarder.exchange("tcp", query)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "DNS forwarder:", err)
+			forwarder.log.Println("DNS forwarder:", err)
 			return
 		}
 		if err := writeTCPMessage(connection, answer); err != nil {
@@ -113,7 +115,7 @@ func (forwarder *Forwarder) exchange(network string, query []byte) ([]byte, erro
 			continue
 		}
 		if err := forwarder.recordMatched(answer); err != nil {
-			fmt.Fprintln(os.Stderr, "DNS forwarder:", err)
+			forwarder.log.Println("DNS forwarder:", err)
 		}
 		return answer, nil
 	}

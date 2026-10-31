@@ -1,4 +1,6 @@
-package tunnel
+// Package xfrm carries the tunnel over kernel ESP: an XFRM interface with ESP-in-UDP states
+// and policies, so the kernel encrypts and decrypts the traffic.
+package xfrm
 
 import (
 	"encoding/binary"
@@ -221,7 +223,13 @@ func (esp *ESP) SendMagicPing(sequence uint16) error {
 }
 
 // errNoReply means the ping socket's one-second read timeout passed without a magic reply.
-var errNoReply = errors.New("no magic ping reply")
+// It is a timeout, which tells the caller to keep waiting.
+var errNoReply = noReplyError{}
+
+type noReplyError struct{}
+
+func (noReplyError) Error() string { return "no magic ping reply" }
+func (noReplyError) Timeout() bool { return true }
 
 // ReadMagicReply waits up to a second for the gateway's answer to a magic ping.
 func (esp *ESP) ReadMagicReply() error {
@@ -242,11 +250,6 @@ func (esp *ESP) ReadMagicReply() error {
 			return nil
 		}
 	}
-}
-
-// IsTimeout reports whether err only means that no reply arrived yet.
-func IsTimeout(err error) bool {
-	return errors.Is(err, errNoReply)
 }
 
 // isMagicReply checks for an ICMP echo reply from magic that carries the magic payload.

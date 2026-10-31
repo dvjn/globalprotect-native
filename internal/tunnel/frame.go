@@ -1,4 +1,4 @@
-// Package tunnel carries IP packets between the TUN device and a GlobalProtect gateway.
+// Package tunnel carries IP packets to a GlobalProtect gateway over the SSL tunnel.
 package tunnel
 
 import (

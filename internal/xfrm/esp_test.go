@@ -1,4 +1,4 @@
-package tunnel
+package xfrm
 
 import (
 	"encoding/binary"

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -56,6 +57,13 @@ func NewClient(server string, identity Identity) *Client {
 		Server:   server,
 		Identity: identity,
 	}
+}
+
+// UseDialer makes the client connect with dialer instead of the default one.
+func (client *Client) UseDialer(dialer *net.Dialer) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = dialer.DialContext
+	client.HTTP.Transport = transport
 }
 
 func (client *Client) post(ctx context.Context, path string, form url.Values) ([]byte, error) {
