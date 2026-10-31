@@ -88,9 +88,9 @@ func (platform Platform) HIPInventory() ([]hip.Product, hip.Facts) {
 
 // ApplyNetwork installs the routes, the split-domain forwarder and the DNS settings on the
 // tunnel device, and returns how to undo them in reverse order.
-func (platform Platform) ApplyNetwork(network engine.Network) (undo func(), err error) {
+func (platform Platform) ApplyNetwork(network engine.Network) (func(), error) {
 	var undoSteps []func() error
-	undo = func() {
+	undo := func() {
 		var errs []error
 		for i := len(undoSteps) - 1; i >= 0; i-- {
 			errs = append(errs, undoSteps[i]())
@@ -99,8 +99,9 @@ func (platform Platform) ApplyNetwork(network engine.Network) (undo func(), err 
 			platform.logger().Println("Cleanup failed:", err)
 		}
 	}
+	applied := false
 	defer func() {
-		if err != nil {
+		if !applied {
 			undo()
 		}
 	}()
@@ -133,6 +134,7 @@ func (platform Platform) ApplyNetwork(network engine.Network) (undo func(), err 
 		return nil, err
 	}
 	undoSteps = append(undoSteps, restoreDNS)
+	applied = true
 	return undo, nil
 }
 
