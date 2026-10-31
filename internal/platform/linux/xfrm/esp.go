@@ -3,7 +3,6 @@
 package xfrm
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/dvjn/globalprotect-native/internal/gp"
 	"github.com/dvjn/globalprotect-native/internal/platform/linux/link"
+	"github.com/dvjn/globalprotect-native/internal/tunnel"
 )
 
 // ESP carries traffic as ESP in UDP, with the kernel doing the encryption.
@@ -30,9 +30,6 @@ type ESP struct {
 	magic    net.IP
 }
 
-// magicPayload makes the gateway answer the ping that keeps ESP alive. See gpst.c in OpenConnect.
-var magicPayload = []byte("monitor\x00\x00pan ha ")
-
 // OpenESP sets up the XFRM interface name with if_id ifid, its ESP states and policies.
 // gateway is the gateway's public address: the ESP peer and the target of the magic ping.
 func OpenESP(name string, ifid uint32, clientIP, gateway net.IP, mtu int, config gp.ESPConfig) (esp *ESP, err error) {
@@ -47,7 +44,7 @@ func OpenESP(name string, ifid uint32, clientIP, gateway net.IP, mtu int, config
 		return nil, err
 	}
 	localPort := esp.socket.LocalAddr().(*net.UDPAddr).Port
-	outer, err := OuterAddress(gateway)
+	outer, err := outerAddress(gateway)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +133,9 @@ func (esp *ESP) openPingSocket() error {
 	return unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &timeout)
 }
 
-// OuterAddress is the local address the kernel uses to reach the gateway. ESP states are
+// outerAddress is the local address the kernel uses to reach the gateway. ESP states are
 // bound to it, so a new address means the tunnel has to be built again.
-func OuterAddress(gateway net.IP) (net.IP, error) {
+func outerAddress(gateway net.IP) (net.IP, error) {
 	routes, err := netlink.RouteGet(gateway)
 	if err != nil {
 		return nil, fmt.Errorf("route to gateway %s: %w", gateway, err)
@@ -205,13 +202,7 @@ func setAlgorithms(state *netlink.XfrmState, config gp.ESPConfig, keys gp.ESPKey
 
 // SendMagicPing sends the ICMP echo request that tells the gateway ESP is alive.
 func (esp *ESP) SendMagicPing(sequence uint16) error {
-	message := make([]byte, 8+len(magicPayload))
-	message[0] = 8
-	binary.BigEndian.PutUint16(message[4:], 0x4747)
-	binary.BigEndian.PutUint16(message[6:], sequence)
-	copy(message[8:], magicPayload)
-	binary.BigEndian.PutUint16(message[2:], internetChecksum(message))
-
+	message := tunnel.MagicPing(sequence)
 	destination := &unix.SockaddrInet4{}
 	copy(destination.Addr[:], esp.magic.To4())
 	for {
@@ -246,37 +237,10 @@ func (esp *ESP) ReadMagicReply() error {
 		if err != nil {
 			return err
 		}
-		if isMagicReply(buffer[:length], esp.magic) {
+		if tunnel.IsMagicReply(buffer[:length], esp.magic) {
 			return nil
 		}
 	}
-}
-
-// isMagicReply checks for an ICMP echo reply from magic that carries the magic payload.
-func isMagicReply(packet []byte, magic net.IP) bool {
-	if len(packet) < 20 || packet[0]>>4 != 4 || packet[9] != unix.IPPROTO_ICMP {
-		return false
-	}
-	headerLength := int(packet[0]&0x0f) * 4
-	if !net.IP(packet[12:16]).Equal(magic) || len(packet) < headerLength+8+len(magicPayload) {
-		return false
-	}
-	icmp := packet[headerLength:]
-	return icmp[0] == 0 && string(icmp[8:8+len(magicPayload)]) == string(magicPayload)
-}
-
-func internetChecksum(data []byte) uint16 {
-	var sum uint32
-	for i := 0; i+1 < len(data); i += 2 {
-		sum += uint32(binary.BigEndian.Uint16(data[i:]))
-	}
-	if len(data)%2 == 1 {
-		sum += uint32(data[len(data)-1]) << 8
-	}
-	for sum>>16 != 0 {
-		sum = sum&0xffff + sum>>16
-	}
-	return ^uint16(sum)
 }
 
 // RemoveLeftovers deletes the interface, policies and states a killed run left behind.

@@ -29,7 +29,7 @@ const espInterfaceID = 0x4501
 // it goes around the tunnel, or to the tunnel's table when it goes through it.
 const splitMark = 0x4501
 
-// Platform implements engine.Platform.
+// Platform implements engine.Platform, and engine.KernelESP with XFRM.
 type Platform struct {
 	// UserHome is reported to the HIP check as a drive next to "/".
 	UserHome string
@@ -37,6 +37,11 @@ type Platform struct {
 	// to stderr.
 	Log *log.Logger
 }
+
+var (
+	_ engine.Platform  = Platform{}
+	_ engine.KernelESP = Platform{}
+)
 
 func (platform Platform) logger() *log.Logger {
 	if platform.Log == nil {
@@ -54,11 +59,7 @@ func (Platform) RemoveLeftovers() error {
 	return RemoveLeftovers()
 }
 
-func (Platform) OuterAddress(gateway net.IP) (net.IP, error) {
-	return xfrm.OuterAddress(gateway)
-}
-
-func (Platform) OpenESP(network engine.Network, config gp.ESPConfig) (engine.ESP, error) {
+func (Platform) OpenKernelESP(network engine.Network, config gp.ESPConfig) (engine.ESP, error) {
 	esp, err := xfrm.OpenESP(deviceName, espInterfaceID, network.ClientIP, network.Gateway, network.MTU, config)
 	if err != nil {
 		return nil, err
@@ -66,7 +67,8 @@ func (Platform) OpenESP(network engine.Network, config gp.ESPConfig) (engine.ESP
 	return esp, nil
 }
 
-func (Platform) OpenDevice(network engine.Network) (io.ReadWriteCloser, error) {
+// Establish creates a TUN device and applies the network to it.
+func (platform Platform) Establish(network engine.Network) (io.ReadWriteCloser, error) {
 	device, err := link.Create(deviceName)
 	if err != nil {
 		return nil, err
@@ -75,7 +77,23 @@ func (Platform) OpenDevice(network engine.Network) (io.ReadWriteCloser, error) {
 		device.Close()
 		return nil, err
 	}
-	return device, nil
+	undo, err := platform.ApplyNetwork(network)
+	if err != nil {
+		device.Close()
+		return nil, err
+	}
+	return &establishedDevice{Device: device, undo: undo}, nil
+}
+
+// establishedDevice undoes the network before it deletes the device.
+type establishedDevice struct {
+	*link.Device
+	undo func()
+}
+
+func (device *establishedDevice) Close() error {
+	device.undo()
+	return device.Device.Close()
 }
 
 func (platform Platform) HIPInventory() ([]hip.Product, hip.Facts) {
@@ -87,7 +105,7 @@ func (platform Platform) HIPInventory() ([]hip.Product, hip.Facts) {
 }
 
 // ApplyNetwork installs the routes, the split-domain forwarder and the DNS settings on the
-// tunnel device, and returns how to undo them in reverse order.
+// tunnel device, kernel ESP's or the TUN device, and returns how to undo them in reverse order.
 func (platform Platform) ApplyNetwork(network engine.Network) (func(), error) {
 	var undoSteps []func() error
 	undo := func() {

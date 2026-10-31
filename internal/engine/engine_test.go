@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -55,7 +57,7 @@ var testGatewayConfig = gp.GatewayConfig{
 }
 
 func TestNetworkExcludes(t *testing.T) {
-	network, err := NewNetwork("192.0.2.1", testGatewayConfig, config.Config{ExcludeDomains: []string{"fast.com"}})
+	network, err := NewNetwork(context.Background(), net.DefaultResolver, "192.0.2.1", testGatewayConfig, config.Config{ExcludeDomains: []string{"fast.com"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +78,7 @@ func TestNetworkIncludeOnly(t *testing.T) {
 		IncludeDomains: []string{"*.corp.example"},
 		IncludeRoutes:  []string{"172.16.0.0/12", " 198.51.100.7 "},
 	}
-	network, err := NewNetwork("192.0.2.1", testGatewayConfig, settings)
+	network, err := NewNetwork(context.Background(), net.DefaultResolver, "192.0.2.1", testGatewayConfig, settings)
 	if err != nil {
 		t.Fatal(err)
 	}

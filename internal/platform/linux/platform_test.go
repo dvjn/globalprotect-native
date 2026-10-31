@@ -1,6 +1,8 @@
 package linux
 
 import (
+	"context"
+	"net"
 	"slices"
 	"testing"
 
@@ -20,7 +22,7 @@ var testGatewayConfig = gp.GatewayConfig{
 }
 
 func TestLinuxPlanExcludes(t *testing.T) {
-	network, err := engine.NewNetwork("192.0.2.1", testGatewayConfig, config.Config{ExcludeDomains: []string{"fast.com"}})
+	network, err := engine.NewNetwork(context.Background(), net.DefaultResolver, "192.0.2.1", testGatewayConfig, config.Config{ExcludeDomains: []string{"fast.com"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestLinuxPlanIncludeOnly(t *testing.T) {
 		IncludeDomains: []string{"*.corp.example"},
 		IncludeRoutes:  []string{"172.16.0.0/12"},
 	}
-	network, err := engine.NewNetwork("192.0.2.1", testGatewayConfig, settings)
+	network, err := engine.NewNetwork(context.Background(), net.DefaultResolver, "192.0.2.1", testGatewayConfig, settings)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -38,9 +39,10 @@ type Network struct {
 }
 
 // NewNetwork plans the network for the gateway's configuration and the user's settings. It
-// resolves the gateway's addresses, so it has to run before the tunnel takes over DNS.
-func NewNetwork(gatewayHost string, gatewayConfig gp.GatewayConfig, settings config.Config) (Network, error) {
-	gateways, err := gatewayAddresses(gatewayHost, gatewayConfig.GatewayAddress)
+// resolves the gateway's addresses with resolver, so it has to run before the tunnel takes
+// over DNS.
+func NewNetwork(ctx context.Context, resolver *net.Resolver, gatewayHost string, gatewayConfig gp.GatewayConfig, settings config.Config) (Network, error) {
+	gateways, err := gatewayAddresses(ctx, resolver, gatewayHost, gatewayConfig.GatewayAddress)
 	if err != nil {
 		return Network{}, err
 	}
@@ -112,8 +114,8 @@ func JoinPrefixes(prefixes []*net.IPNet) string {
 }
 
 // gatewayAddresses lists every public address of the gateway, so none of them is routed into the tunnel.
-func gatewayAddresses(host, configured string) ([]net.IP, error) {
-	addresses, err := net.LookupIP(host)
+func gatewayAddresses(ctx context.Context, resolver *net.Resolver, host, configured string) ([]net.IP, error) {
+	addresses, err := resolver.LookupIP(ctx, "ip4", host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve gateway %s: %w", host, err)
 	}

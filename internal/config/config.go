@@ -26,6 +26,9 @@ type Config struct {
 	DeviceIdentity bool `yaml:"device_identity"`
 	// SSLOnly skips ESP and always uses the SSL tunnel.
 	SSLOnly bool `yaml:"ssl_only"`
+	// KernelESP lets the kernel encrypt ESP. Off, gpn encrypts it itself, as it must on
+	// systems whose kernel cannot.
+	KernelESP bool `yaml:"kernel_esp"`
 	// ExcludeDomains are sent around the tunnel in addition to the gateway's own exclude list.
 	// "*.example.com" matches the subdomains of example.com; other entries match exactly.
 	ExcludeDomains []string `yaml:"exclude_domains,omitempty"`
@@ -51,7 +54,7 @@ type HIP struct {
 
 // Default is the configuration used when the file does not exist.
 func Default() Config {
-	return Config{AutoConnect: true, DeviceIdentity: true, CheckUpdates: true, HIP: HIP{Send: true}}
+	return Config{AutoConnect: true, DeviceIdentity: true, KernelESP: true, CheckUpdates: true, HIP: HIP{Send: true}}
 }
 
 // Load reads the file at path, falling back to Default for anything it leaves out.

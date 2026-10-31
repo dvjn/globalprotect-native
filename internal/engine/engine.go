@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -66,11 +67,12 @@ func Run(ctx context.Context, login Login, platform Platform, options Options) e
 		}
 	}
 
-	network, err := NewNetwork(opened.Gateway.Address, gatewayConfig, settings)
+	dialer := platform.Dialer()
+	network, err := NewNetwork(ctx, resolver(dialer), opened.Gateway.Address, gatewayConfig, settings)
 	if err != nil {
 		return err
 	}
-	dog, err := newWatchdog(platform, network.Gateway, rekeyInterval(gatewayConfig.IdleTimeout))
+	dog, err := newWatchdog(dialer, network.Gateway, rekeyInterval(gatewayConfig.IdleTimeout))
 	if err != nil {
 		return err
 	}
@@ -85,7 +87,12 @@ func Run(ctx context.Context, login Login, platform Platform, options Options) e
 	}
 
 	if !settings.SSLOnly && gatewayConfig.ESP != nil {
-		err := runESP(ctx, platform, network, *gatewayConfig.ESP, dog, connected)
+		var err error
+		if kernel, ok := platform.(KernelESP); ok && settings.KernelESP {
+			err = runKernelESP(ctx, kernel, network, *gatewayConfig.ESP, dog, connected)
+		} else {
+			err = runESP(ctx, platform, network, *gatewayConfig.ESP, dog, connected)
+		}
 		if !errors.Is(err, errESPUnavailable) {
 			return err
 		}
@@ -108,18 +115,18 @@ func NeedsRebuild(err error) bool {
 // watchdog notices, on every keepalive, that the tunnel must be rebuilt: its keys are about
 // to expire, or the local address that reaches the gateway changed, as after a Wi-Fi switch.
 type watchdog struct {
-	platform Platform
-	gateway  net.IP
-	outer    net.IP
-	rekeyAt  time.Time
+	dialer  *net.Dialer
+	gateway net.IP
+	outer   net.IP
+	rekeyAt time.Time
 }
 
-func newWatchdog(platform Platform, gateway net.IP, rekeyAfter time.Duration) (watchdog, error) {
-	outer, err := platform.OuterAddress(gateway)
+func newWatchdog(dialer *net.Dialer, gateway net.IP, rekeyAfter time.Duration) (watchdog, error) {
+	outer, err := outerAddress(dialer, gateway)
 	if err != nil {
 		return watchdog{}, err
 	}
-	dog := watchdog{platform: platform, gateway: gateway, outer: outer}
+	dog := watchdog{dialer: dialer, gateway: gateway, outer: outer}
 	if rekeyAfter > 0 {
 		dog.rekeyAt = time.Now().Add(rekeyAfter)
 	}
@@ -130,7 +137,7 @@ func (dog watchdog) check() error {
 	if !dog.rekeyAt.IsZero() && time.Now().After(dog.rekeyAt) {
 		return errRekeyDue
 	}
-	current, err := dog.platform.OuterAddress(dog.gateway)
+	current, err := outerAddress(dog.dialer, dog.gateway)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errNetworkChanged, err)
 	}
@@ -157,9 +164,38 @@ var errESPUnavailable = errors.New("ESP unavailable")
 // to SSL.
 const espProbeTime = 10 * time.Second
 
-// runESP carries traffic over ESP until ctx ends or the gateway stops answering.
+// runESP carries traffic over ESP through the platform's device, encrypting it in the engine,
+// until ctx ends or the gateway stops answering.
 func runESP(ctx context.Context, platform Platform, network Network, config gp.ESPConfig, dog watchdog, connected func(string)) error {
-	esp, err := platform.OpenESP(network, config)
+	gateway := net.JoinHostPort(network.Gateway.String(), strconv.Itoa(config.UDPPort))
+	connection, err := orDefault(platform.Dialer()).DialContext(ctx, "udp4", gateway)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errESPUnavailable, err)
+	}
+	esp, err := tunnel.NewESP(connection, config, network.ClientIP, network.Gateway)
+	if err != nil {
+		connection.Close()
+		return fmt.Errorf("%w: %w", errESPUnavailable, err)
+	}
+	defer esp.Close()
+
+	if err := esp.Probe(espProbeTime); err != nil {
+		return fmt.Errorf("%w: %w", errESPUnavailable, err)
+	}
+	device, err := platform.Establish(network)
+	if err != nil {
+		return err
+	}
+	defer device.Close()
+
+	connected("ESP")
+	return forwardPackets(ctx, device, esp, network.MTU, dog)
+}
+
+// runKernelESP carries traffic over ESP that the kernel encrypts, until ctx ends or the
+// gateway stops answering.
+func runKernelESP(ctx context.Context, platform KernelESP, network Network, config gp.ESPConfig, dog watchdog, connected func(string)) error {
+	esp, err := platform.OpenKernelESP(network, config)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errESPUnavailable, err)
 	}
@@ -236,14 +272,8 @@ func keepESPAlive(ctx context.Context, esp ESP, dog watchdog) error {
 	}
 }
 
-// runSSL carries traffic over the SSL tunnel through the platform's packet device.
+// runSSL carries traffic over the SSL tunnel through the platform's device.
 func runSSL(ctx context.Context, platform Platform, opened Session, gatewayConfig gp.GatewayConfig, network Network, dog watchdog, connected func(string)) error {
-	device, err := platform.OpenDevice(network)
-	if err != nil {
-		return err
-	}
-	defer device.Close()
-
 	sslTunnel, err := tunnel.DialSSL(ctx, platform.Dialer(), opened.Gateway.Address, gatewayConfig.SSLTunnelPath,
 		opened.Session.Username, opened.Session.AuthCookie)
 	if err != nil {
@@ -251,19 +281,27 @@ func runSSL(ctx context.Context, platform Platform, opened Session, gatewayConfi
 	}
 	defer sslTunnel.Close()
 
-	undo, err := platform.ApplyNetwork(network)
+	device, err := platform.Establish(network)
 	if err != nil {
 		return err
 	}
-	defer undo()
+	defer device.Close()
 
 	connected("SSL")
 	return forwardPackets(ctx, device, sslTunnel, network.MTU, dog)
 }
 
+// packetTunnel carries IP packets to the gateway: the SSL tunnel, or ESP the engine encrypts.
+type packetTunnel interface {
+	WritePacket(packet []byte) error
+	// ReadPacket returns the next packet for the device, or nil for a keepalive reply.
+	ReadPacket() ([]byte, error)
+	SendKeepalive() error
+}
+
 // forwardPackets copies packets both ways until ctx ends, the tunnel fails or goes quiet, or the
 // watchdog says the tunnel must be rebuilt.
-func forwardPackets(ctx context.Context, device io.ReadWriter, sslTunnel *tunnel.SSL, mtu int, dog watchdog) error {
+func forwardPackets(ctx context.Context, device io.ReadWriter, packets packetTunnel, mtu int, dog watchdog) error {
 	var lastReceived atomic.Int64
 	lastReceived.Store(time.Now().UnixNano())
 	failures := make(chan error, 2)
@@ -276,7 +314,7 @@ func forwardPackets(ctx context.Context, device io.ReadWriter, sslTunnel *tunnel
 				failures <- fmt.Errorf("read the tunnel device: %w", err)
 				return
 			}
-			if err := sslTunnel.WritePacket(packet[:length]); err != nil {
+			if err := packets.WritePacket(packet[:length]); err != nil {
 				failures <- fmt.Errorf("send to gateway: %w", err)
 				return
 			}
@@ -285,7 +323,7 @@ func forwardPackets(ctx context.Context, device io.ReadWriter, sslTunnel *tunnel
 
 	go func() {
 		for {
-			packet, err := sslTunnel.ReadPacket()
+			packet, err := packets.ReadPacket()
 			if err != nil {
 				failures <- fmt.Errorf("receive from gateway: %w", err)
 				return
@@ -316,7 +354,7 @@ func forwardPackets(ctx context.Context, device io.ReadWriter, sslTunnel *tunnel
 			if err := dog.check(); err != nil {
 				return err
 			}
-			if err := sslTunnel.SendKeepalive(); err != nil {
+			if err := packets.SendKeepalive(); err != nil {
 				return fmt.Errorf("send keepalive: %w", err)
 			}
 		}
