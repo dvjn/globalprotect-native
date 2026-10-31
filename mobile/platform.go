@@ -97,19 +97,12 @@ func joinPrefixes(prefixes []*net.IPNet) string {
 	return strings.Join(joined, ",")
 }
 
-// inventory is the JSON of App.HIPInventory.
-type inventory struct {
-	Products   []hip.Product   `json:"products"`
-	Drives     []hip.Drive     `json:"drives"`
-	Interfaces []hip.Interface `json:"interfaces"`
-}
-
-func (platform *platform) HIPInventory() ([]hip.Product, hip.Facts) {
-	var found inventory
-	if text := platform.app.HIPInventory(); text != "" {
-		if err := json.Unmarshal([]byte(text), &found); err != nil {
-			platform.app.Log("HIP inventory: " + err.Error())
+func (platform *platform) HIPProfile() hip.Profile {
+	var detected hip.Profile
+	if text := platform.app.HIPProfile(); text != "" {
+		if err := json.Unmarshal([]byte(text), &detected); err != nil {
+			platform.app.Log("HIP profile: " + err.Error())
 		}
 	}
-	return found.Products, hip.Facts{Drives: found.Drives, Interfaces: found.Interfaces}
+	return detected
 }

@@ -96,12 +96,27 @@ func (device *establishedDevice) Close() error {
 	return device.Device.Close()
 }
 
-func (platform Platform) HIPInventory() ([]hip.Product, hip.Facts) {
+func (platform Platform) HIPProfile() hip.Profile {
 	drives := []string{"/"}
 	if platform.UserHome != "" {
 		drives = append(drives, platform.UserHome)
 	}
-	return detectProducts(), collectFacts(drives)
+	facts := collectFacts(drives)
+	return hip.Profile{
+		OSVendor:   "Linux",
+		Products:   orEmpty(detectProducts()),
+		Drives:     orEmpty(facts.Drives),
+		Interfaces: orEmpty(facts.Interfaces),
+	}
+}
+
+// orEmpty makes nothing detected an empty list, which a profile reports as none rather than
+// leaving to detection.
+func orEmpty[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
 }
 
 // ApplyNetwork installs the routes, the split-domain forwarder and the DNS settings on the

@@ -15,6 +15,7 @@ import (
 	"github.com/dvjn/globalprotect-native/internal/control"
 	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/gp"
+	"github.com/dvjn/globalprotect-native/internal/hip"
 )
 
 // App is what the Android app provides, implemented in Kotlin.
@@ -28,11 +29,12 @@ type App interface {
 	// DNSServer is a DNS server of the network outside the VPN, which looks up the portal
 	// and gateways; "" uses Go's default resolver.
 	DNSServer() string
-	// HIPInventory describes the device for the HIP report, as JSON such as
-	// {"products": [{"category": "anti-malware", "vendor": "…", "name": "…", "version": "…",
-	// "state": "yes"}], "drives": [{"name": "/data", "encrypted": true}], "interfaces":
-	// [{"name": "wlan0", "mac": "…", "ipv4": ["…"]}]}. "" reports nothing.
-	HIPInventory() string
+	// HIPProfile is what the app detects for the HIP report, as HIP profile JSON such as
+	// {"os_vendor": "Google", "products": [{"category": "anti-malware", "vendor": "…",
+	// "name": "…", "version": "…", "state": "yes"}], "drives": [{"name": "/data",
+	// "encrypted": true}], "interfaces": [{"name": "wlan0", "mac": "…", "ipv4": ["…"]}]}.
+	// Fields it leaves out come from the identity; "" detects nothing.
+	HIPProfile() string
 	// Log receives one line of progress.
 	Log(message string)
 }
@@ -80,6 +82,16 @@ type settings struct {
 	ExcludeDomains []string `json:"exclude_domains"`
 	IncludeDomains []string `json:"include_domains"`
 	IncludeRoutes  []string `json:"include_routes"`
+	// HIPProfile, exported by any client, is reported instead of what the app detects.
+	HIPProfile hip.Profile `json:"hip_profile"`
+}
+
+func parseSettings(settingsJSON string) (settings, error) {
+	var parsed settings
+	if err := json.Unmarshal([]byte(settingsJSON), &parsed); err != nil {
+		return settings{}, fmt.Errorf("settings: %w", err)
+	}
+	return parsed, nil
 }
 
 // credential is the saved portal login, from Login.Finish.
@@ -114,15 +126,15 @@ type Tunnel struct {
 //	{"portal": "vpn.example.com", "gateway": "", "ssl_only": false, "send_hip": true,
 //	 "credential": {"username": "…", "user_auth_cookie": "…", "prelogon_user_auth_cookie": "…"},
 //	 "identity": {"host_id": "…", "serial_number": "…", "computer": "…", "os_version": "…", "client_version": "…"},
-//	 "exclude_domains": [], "include_domains": [], "include_routes": []}
+//	 "exclude_domains": [], "include_domains": [], "include_routes": [], "hip_profile": {…}}
 //
 // It keeps the tunnel up until Stop, telling listener about every change. When the portal
-// rejects the saved login, the tunnel stops in state "needs_login"; log in again and start a
+// rejects the saved login, the tunnel stops in state "needs-login"; log in again and start a
 // new one.
 func Start(settingsJSON string, app App, listener Listener) (*Tunnel, error) {
-	var settings settings
-	if err := json.Unmarshal([]byte(settingsJSON), &settings); err != nil {
-		return nil, fmt.Errorf("settings: %w", err)
+	settings, err := parseSettings(settingsJSON)
+	if err != nil {
+		return nil, err
 	}
 	if settings.Portal == "" {
 		return nil, fmt.Errorf("settings: no portal")
@@ -136,6 +148,7 @@ func Start(settingsJSON string, app App, listener Listener) (*Tunnel, error) {
 			UserAuthCookie:         settings.Credential.UserAuthCookie,
 			PrelogonUserAuthCookie: settings.Credential.PrelogonUserAuthCookie,
 		},
+		HIP: settings.HIPProfile,
 	}
 	engineSettings := config.Config{
 		SSLOnly:        settings.SSLOnly,
@@ -202,4 +215,36 @@ type appLog struct{ app App }
 func (writer appLog) Write(line []byte) (int, error) {
 	writer.app.Log(strings.TrimSuffix(string(line), "\n"))
 	return len(line), nil
+}
+
+// ExportHIPProfile is the HIP profile the app reports with settingsJSON, Start's settings, as
+// JSON that this or any other client can import: what it detects, with the identity and the
+// imported profile in place. No login is needed.
+func ExportHIPProfile(settingsJSON string, app App) (string, error) {
+	profile, _, err := describe(settingsJSON, app)
+	if err != nil {
+		return "", err
+	}
+	exported, err := json.MarshalIndent(profile, "", "  ")
+	return string(exported), err
+}
+
+// PreviewHIPReport is the HIP report the app sends with settingsJSON, with placeholders for
+// what each session sets.
+func PreviewHIPReport(settingsJSON string, app App) (string, error) {
+	profile, username, err := describe(settingsJSON, app)
+	if err != nil {
+		return "", err
+	}
+	report, err := engine.PreviewHIPReport(profile, username)
+	return string(report), err
+}
+
+func describe(settingsJSON string, app App) (hip.Profile, string, error) {
+	settings, err := parseSettings(settingsJSON)
+	if err != nil {
+		return hip.Profile{}, "", err
+	}
+	username := settings.Credential.Username
+	return engine.HIPProfile(settings.Identity.gp(), username, newPlatform(app), settings.HIPProfile), username, nil
 }

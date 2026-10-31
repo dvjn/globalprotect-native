@@ -17,6 +17,7 @@ type Input struct {
 	ClientIP      string
 	ClientVersion string
 	OS            string
+	OSVendor      string
 	Products      []Product
 	Facts         Facts
 	Now           time.Time
@@ -133,7 +134,7 @@ func hostInfoCategory(input Input) category {
 	info := &hostInfo{
 		ClientVersion: input.ClientVersion,
 		OS:            input.OS,
-		OSVendor:      "Linux",
+		OSVendor:      input.OSVendor,
 		Domain:        input.HostDomain,
 		HostName:      input.Computer,
 		HostID:        input.HostID,

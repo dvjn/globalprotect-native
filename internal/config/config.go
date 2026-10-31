@@ -50,6 +50,9 @@ func (config Config) IncludeOnly() bool {
 // HIP switches the host information profile report.
 type HIP struct {
 	Send bool `yaml:"send"`
+	// Profile is a HIP profile file, as `gpn hip --export` or the Android app writes, whose
+	// fields are reported instead of what gpn detects.
+	Profile string `yaml:"profile,omitempty"`
 }
 
 // Default is the configuration used when the file does not exist.

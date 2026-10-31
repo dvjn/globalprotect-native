@@ -31,6 +31,10 @@ check_updates: true
 # Send a host information profile report when the gateway asks for one.
 hip:
   send: true
+  # Report and log in as another machine: a HIP profile that `gpn hip --export` or the
+  # Android app exported. Its fields replace what gpn detects; `gpn hip --preview` shows the
+  # report it gives.
+  # profile: /etc/globalprotect-native/hip-profile.json
 
 # Extra domains to send around the tunnel, added to the gateway's own list.
 # "*.example.com" matches every subdomain of example.com; other entries match exactly.

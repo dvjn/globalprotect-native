@@ -24,8 +24,10 @@ type Platform interface {
 	// Establish creates the tunnel device with the network's address, and sends the network's
 	// traffic and DNS into it. Closing the device undoes all of that.
 	Establish(network Network) (io.ReadWriteCloser, error)
-	// HIPInventory is the security products and machine facts the HIP report describes.
-	HIPInventory() ([]hip.Product, hip.Facts)
+	// HIPProfile is what the platform detects for the HIP report: at least the security
+	// products, drives and interfaces, and the OS vendor. The engine fills in the rest from the
+	// login's identity.
+	HIPProfile() hip.Profile
 }
 
 // KernelESP is a Platform whose kernel can carry ESP, which is faster than the engine

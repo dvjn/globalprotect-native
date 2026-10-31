@@ -5,32 +5,62 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dvjn/globalprotect-native/internal/gp"
 	"github.com/dvjn/globalprotect-native/internal/hip"
 )
 
-// BuildHIPReport describes the machine to the gateway, with the platform's inventory.
+// HIPProfile is what the HIP report says about the machine: the platform's detected profile
+// over what identity and username give, with override over both. Exporting it, or importing
+// it as another client's override, reports the same machine.
+func HIPProfile(identity gp.Identity, username string, platform Platform, override hip.Profile) hip.Profile {
+	base := identityProfile(identity)
+	base.OSVendor = "Linux"
+	_, base.HostDomain, _ = strings.Cut(username, "@")
+	return override.Over(platform.HIPProfile().Over(base))
+}
+
+// identityProfile is what identity says about the machine.
+func identityProfile(identity gp.Identity) hip.Profile {
+	return hip.Profile{
+		HostID:        identity.HostID,
+		SerialNumber:  identity.SerialNumber,
+		Computer:      identity.Computer,
+		OS:            identity.OSVersion,
+		ClientVersion: identity.ClientVersion,
+	}
+}
+
+// BuildHIPReport describes the machine to the gateway for the session.
 func BuildHIPReport(opened Session, clientIP string, platform Platform) ([]byte, error) {
 	sessionDomain := opened.Session.Domain
 	if sessionDomain == "(empty_domain)" {
 		sessionDomain = ""
 	}
-	_, emailDomain, _ := strings.Cut(opened.Session.Username, "@")
-	products, facts := platform.HIPInventory()
-	identity := opened.Client.Identity
-	return hip.Build(hip.Input{
-		MD5:           opened.Session.HIPToken(),
-		Username:      opened.Session.Username,
-		Domain:        sessionDomain,
-		HostDomain:    emailDomain,
-		Computer:      opened.Session.Computer,
-		HostID:        identity.HostID,
+	profile := HIPProfile(opened.Client.Identity, opened.Session.Username, platform, opened.HIP)
+	return hip.Build(hipInput(profile, opened.Session.HIPToken(), opened.Session.Username, sessionDomain, clientIP))
+}
+
+// PreviewHIPReport is the report profile gives, with placeholders for what each session sets.
+func PreviewHIPReport(profile hip.Profile, username string) ([]byte, error) {
+	return hip.Build(hipInput(profile, "(set by each session)", username, "", "(assigned by the gateway)"))
+}
+
+func hipInput(profile hip.Profile, md5, username, domain, clientIP string) hip.Input {
+	return hip.Input{
+		MD5:           md5,
+		Username:      username,
+		Domain:        domain,
+		HostDomain:    profile.HostDomain,
+		Computer:      profile.Computer,
+		HostID:        profile.HostID,
 		ClientIP:      clientIP,
-		ClientVersion: identity.ClientVersion,
-		OS:            identity.OSVersion,
-		Products:      products,
-		Facts:         facts,
+		ClientVersion: profile.ClientVersion,
+		OS:            profile.OS,
+		OSVendor:      profile.OSVendor,
+		Products:      profile.Products,
+		Facts:         hip.Facts{Drives: profile.Drives, Interfaces: profile.Interfaces},
 		Now:           time.Now(),
-	})
+	}
 }
 
 // sendHIPReportIfNeeded submits a report when the gateway asks for one.

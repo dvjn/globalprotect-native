@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dvjn/globalprotect-native/internal/gp"
+	"github.com/dvjn/globalprotect-native/internal/hip"
 )
 
 // Login is what opens a gateway session: the portal with the user's saved login, and the
@@ -18,6 +19,29 @@ type Login struct {
 	Gateway    string
 	Identity   gp.Identity
 	Credential gp.Credential
+	// HIP, when it sets anything, is reported instead of what the platform detects. Its host
+	// ID, serial number, computer, OS and client version also log in, so the login and the
+	// report agree.
+	HIP hip.Profile
+}
+
+// identity is the login's identity with what its HIP profile overrides.
+func (login Login) identity() gp.Identity {
+	return WithHIPProfile(login.Identity, login.HIP)
+}
+
+// WithHIPProfile is identity with what profile overrides: its host ID, serial number,
+// computer, OS and client version. Every request to the portal and gateways uses it, so they
+// all see the machine the HIP report describes.
+func WithHIPProfile(identity gp.Identity, profile hip.Profile) gp.Identity {
+	merged := profile.Over(identityProfile(identity))
+	return gp.Identity{
+		HostID:        merged.HostID,
+		SerialNumber:  merged.SerialNumber,
+		Computer:      merged.Computer,
+		OSVersion:     merged.OS,
+		ClientVersion: merged.ClientVersion,
+	}
 }
 
 // Session is a logged-in gateway.
@@ -26,7 +50,9 @@ type Session struct {
 	Session      gp.Session
 	Gateway      gp.Gateway
 	PortalConfig gp.PortalConfig
-	log          *log.Logger
+	// HIP is the login's HIP profile.
+	HIP hip.Profile
+	log *log.Logger
 }
 
 // OpenSession logs in to the chosen gateway, or the fastest one, with the saved portal login,
@@ -34,7 +60,8 @@ type Session struct {
 // went. A rejected login comes back as gp.ErrAuthenticationRejected.
 func OpenSession(ctx context.Context, login Login, dialer *net.Dialer, logger *log.Logger) (Session, error) {
 	logger = orDiscard(logger)
-	portal := newClient(login.Portal, login.Identity, dialer)
+	identity := login.identity()
+	portal := newClient(login.Portal, identity, dialer)
 	portalConfig, _, err := portal.PortalGetConfig(ctx, login.Credential)
 	if err != nil {
 		return Session{}, fmt.Errorf("portal %s: %w", portal.Server, err)
@@ -49,7 +76,7 @@ func OpenSession(ctx context.Context, login Login, dialer *net.Dialer, logger *l
 		return Session{}, err
 	}
 
-	client := newClient(gateway.Address, login.Identity, dialer)
+	client := newClient(gateway.Address, identity, dialer)
 	session, err := client.GatewayLogin(ctx, gp.Credential{
 		Username:               login.Credential.Username,
 		UserAuthCookie:         portalConfig.UserAuthCookie,
@@ -58,7 +85,7 @@ func OpenSession(ctx context.Context, login Login, dialer *net.Dialer, logger *l
 	if err != nil {
 		return Session{}, err
 	}
-	return Session{Client: client, Session: session, Gateway: gateway, PortalConfig: portalConfig, log: logger}, nil
+	return Session{Client: client, Session: session, Gateway: gateway, PortalConfig: portalConfig, HIP: login.HIP, log: logger}, nil
 }
 
 func newClient(server string, identity gp.Identity, dialer *net.Dialer) *gp.Client {

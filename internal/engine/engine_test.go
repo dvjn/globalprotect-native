@@ -10,6 +10,7 @@ import (
 
 	"github.com/dvjn/globalprotect-native/internal/config"
 	"github.com/dvjn/globalprotect-native/internal/gp"
+	"github.com/dvjn/globalprotect-native/internal/hip"
 )
 
 func TestRekeyInterval(t *testing.T) {
@@ -98,5 +99,25 @@ func TestParseIncludeRoutes(t *testing.T) {
 		if _, err := parseIncludeRoutes([]string{bad}); err == nil {
 			t.Errorf("%q is accepted", bad)
 		}
+	}
+}
+
+func TestLoginIdentityFollowsHIPProfile(t *testing.T) {
+	login := Login{
+		Identity: gp.Identity{HostID: "phone", SerialNumber: "serial", Computer: "Pixel", OSVersion: "Android 17", ClientVersion: "6.2.8-1057"},
+		HIP:      hip.Profile{HostID: "laptop", SerialNumber: "laptop-serial", OS: "Linux Fedora 44"},
+	}
+	want := gp.Identity{HostID: "laptop", SerialNumber: "laptop-serial", Computer: "Pixel", OSVersion: "Linux Fedora 44", ClientVersion: "6.2.8-1057"}
+	if got := login.identity(); got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestWithHIPProfileIsIdempotent(t *testing.T) {
+	identity := gp.Identity{HostID: "phone", Computer: "Pixel", OSVersion: "Android 17"}
+	profile := hip.Profile{HostID: "laptop", Computer: "laptop"}
+	once := WithHIPProfile(identity, profile)
+	if twice := WithHIPProfile(once, profile); twice != once {
+		t.Errorf("applied twice %+v, once %+v", twice, once)
 	}
 }

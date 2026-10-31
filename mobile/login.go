@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/gp"
 	"github.com/dvjn/globalprotect-native/internal/loginpage"
 )
@@ -20,15 +20,15 @@ type Login struct {
 	page   *loginpage.Server
 }
 
-// StartLogin asks portal how to log in and serves its SAML form on localhost. identityJSON is
-// the "identity" object of Start's settings. The app opens URL in a Custom Tab and, when the
-// browser opens a globalprotectcallback: URI, passes it to Finish.
-func StartLogin(portal, identityJSON string, app App) (*Login, error) {
-	var device identity
-	if err := json.Unmarshal([]byte(identityJSON), &device); err != nil {
-		return nil, fmt.Errorf("identity: %w", err)
+// StartLogin asks the portal in settingsJSON, Start's settings without a credential, how to
+// log in, and serves its SAML form on localhost. The app opens URL in a Custom Tab and, when
+// the browser opens a globalprotectcallback: URI, passes it to Finish.
+func StartLogin(settingsJSON string, app App) (*Login, error) {
+	settings, err := parseSettings(settingsJSON)
+	if err != nil {
+		return nil, err
 	}
-	client := portalClient(portal, device, app)
+	client := portalClient(settings, app)
 	ctx, cancel := context.WithTimeout(context.Background(), loginRequestTimeout)
 	defer cancel()
 	prelogin, err := client.PortalPrelogin(ctx)
@@ -49,9 +49,10 @@ func StartLogin(portal, identityJSON string, app App) (*Login, error) {
 	return &Login{portal: client, page: page}, nil
 }
 
-// portalClient connects outside the VPN, so a login works while a tunnel is up.
-func portalClient(portal string, device identity, app App) *gp.Client {
-	client := gp.NewClient(portal, device.gp())
+// portalClient connects outside the VPN, so a login works while a tunnel is up, as the
+// machine the settings' HIP profile describes.
+func portalClient(settings settings, app App) *gp.Client {
+	client := gp.NewClient(settings.Portal, engine.WithHIPProfile(settings.Identity.gp(), settings.HIPProfile))
 	client.UseDialer(protectedDialer(app))
 	return client
 }
@@ -90,23 +91,18 @@ func (login *Login) Close() {
 }
 
 // Gateways lists the portal's gateways for the app to offer a choice, as JSON such as
-// [{"name": "India South", "address": "gw.example.com"}]. credentialJSON is what Finish
-// returned.
-func Gateways(portal, identityJSON, credentialJSON string, app App) (string, error) {
-	var device identity
-	if err := json.Unmarshal([]byte(identityJSON), &device); err != nil {
-		return "", fmt.Errorf("identity: %w", err)
-	}
-	var saved credential
-	if err := json.Unmarshal([]byte(credentialJSON), &saved); err != nil {
-		return "", fmt.Errorf("credential: %w", err)
+// [{"name": "India South", "address": "gw.example.com"}]. settingsJSON is Start's settings.
+func Gateways(settingsJSON string, app App) (string, error) {
+	settings, err := parseSettings(settingsJSON)
+	if err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), loginRequestTimeout)
 	defer cancel()
-	portalConfig, _, err := portalClient(portal, device, app).PortalGetConfig(ctx, gp.Credential{
-		Username:               saved.Username,
-		UserAuthCookie:         saved.UserAuthCookie,
-		PrelogonUserAuthCookie: saved.PrelogonUserAuthCookie,
+	portalConfig, _, err := portalClient(settings, app).PortalGetConfig(ctx, gp.Credential{
+		Username:               settings.Credential.Username,
+		UserAuthCookie:         settings.Credential.UserAuthCookie,
+		PrelogonUserAuthCookie: settings.Credential.PrelogonUserAuthCookie,
 	})
 	if err != nil {
 		return "", err

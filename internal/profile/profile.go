@@ -4,13 +4,16 @@ package profile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/dvjn/globalprotect-native/internal/config"
 	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/gp"
+	"github.com/dvjn/globalprotect-native/internal/hip"
 	"github.com/dvjn/globalprotect-native/internal/state"
 )
 
@@ -85,7 +88,11 @@ func (profile Profile) portalClient() (*gp.Client, *state.State, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return gp.NewClient(portal, identity), saved, nil
+	override, err := profile.hipOverride()
+	if err != nil {
+		return nil, nil, err
+	}
+	return gp.NewClient(portal, engine.WithHIPProfile(identity, override)), saved, nil
 }
 
 // Login is what the engine needs to open a gateway session: the portal with its saved cookie,
@@ -103,16 +110,60 @@ func (profile Profile) Login() (engine.Login, error) {
 	if !found {
 		return engine.Login{}, fmt.Errorf("not logged in to %s: %w", portal.Server, gp.ErrAuthenticationRejected)
 	}
+	override, err := profile.hipOverride()
+	if err != nil {
+		return engine.Login{}, err
+	}
+	// portal.Identity has the override already; applying it again changes nothing.
 	return engine.Login{
 		Portal:   portal.Server,
 		Gateway:  gatewayName,
 		Identity: portal.Identity,
+		HIP:      override,
 		Credential: gp.Credential{
 			Username:               cookie.Username,
 			UserAuthCookie:         cookie.UserAuthCookie,
 			PrelogonUserAuthCookie: cookie.PrelogonUserAuthCookie,
 		},
 	}, nil
+}
+
+// hipOverride is the HIP profile the settings import, if any.
+func (profile Profile) hipOverride() (hip.Profile, error) {
+	var override hip.Profile
+	if profile.Settings.HIP.Profile == "" {
+		return override, nil
+	}
+	text, err := os.ReadFile(profile.Settings.HIP.Profile)
+	if err != nil {
+		return override, fmt.Errorf("HIP profile: %w", err)
+	}
+	if err := json.Unmarshal(text, &override); err != nil {
+		return override, fmt.Errorf("HIP profile %s: %w", profile.Settings.HIP.Profile, err)
+	}
+	return override, nil
+}
+
+// HIPProfile is what the HIP report says about this machine with platform, for exporting, and
+// the saved login's username, if any. No login is needed.
+func (profile Profile) HIPProfile(platform engine.Platform) (hip.Profile, string, error) {
+	saved, err := state.Load(profile.StatePath)
+	if err != nil {
+		return hip.Profile{}, "", err
+	}
+	identity, err := profile.Identify(profile.Settings, saved.HostID)
+	if err != nil {
+		return hip.Profile{}, "", err
+	}
+	override, err := profile.hipOverride()
+	if err != nil {
+		return hip.Profile{}, "", err
+	}
+	username := ""
+	if portal, _, err := profile.target(saved); err == nil {
+		username = saved.Portals[portal].Username
+	}
+	return engine.HIPProfile(identity, username, platform, override), username, nil
 }
 
 // LoginPage returns the portal's SAML page to open in a browser, and how long the login may take.

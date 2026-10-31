@@ -28,6 +28,8 @@ Commands for root:
   cleanup            Remove what a killed daemon left behind
   config             Print the gateway's tunnel configuration
   hip [--send]       Build the HIP report, and send it with --send
+  hip --export       Print the HIP profile, to import here or in another client
+  hip --preview      Print the report the HIP profile gives, without connecting
 
   version            Print the version
 `

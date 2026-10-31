@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,12 +13,15 @@ import (
 	"github.com/dvjn/globalprotect-native/internal/userdir"
 )
 
-// runHIP builds the HIP report for the configured gateway, and sends it with --send.
-// It reads the daemon's files, so it runs as root.
+// runHIP builds the HIP report for the configured gateway, and sends it with --send. With
+// --export it prints the HIP profile instead, and with --preview the report it gives, without
+// a session. It reads the daemon's files, so it runs as root.
 func runHIP(args []string) error {
 	flags := flag.NewFlagSet("hip", flag.ExitOnError)
 	loadProfile := profileFlags(flags)
 	send := flags.Bool("send", false, "submit the report to the gateway instead of only printing it")
+	export := flags.Bool("export", false, "print the HIP profile, which another gpn can import with hip.profile")
+	preview := flags.Bool("preview", false, "print the report the HIP profile gives, without connecting")
 	flags.Parse(args)
 	profile, err := loadProfile()
 	if err != nil {
@@ -26,6 +30,25 @@ func runHIP(args []string) error {
 	home, err := userdir.Home()
 	if err != nil {
 		return err
+	}
+	platform := linux.Platform{UserHome: home, Log: logger}
+
+	if *export || *preview {
+		described, username, err := profile.HIPProfile(platform)
+		if err != nil {
+			return err
+		}
+		var output []byte
+		if *export {
+			output, err = json.MarshalIndent(described, "", "  ")
+		} else {
+			output, err = engine.PreviewHIPReport(described, username)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(output))
+		return nil
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -51,7 +74,7 @@ func runHIP(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Gateway %s wants a HIP report: %t\n", opened.Gateway.Name, needed)
 
-	report, err := engine.BuildHIPReport(opened, gatewayConfig.ClientIP, linux.Platform{UserHome: home, Log: logger})
+	report, err := engine.BuildHIPReport(opened, gatewayConfig.ClientIP, platform)
 	if err != nil {
 		return err
 	}

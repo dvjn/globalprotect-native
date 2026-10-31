@@ -13,9 +13,10 @@ func TestBuild(t *testing.T) {
 		HostDomain:    "example.com",
 		Computer:      "laptop",
 		HostID:        "host-id",
-		ClientIP:      "172.30.40.108",
+		ClientIP:      "198.51.100.108",
 		ClientVersion: "6.2.8-1057",
 		OS:            "Linux Fedora 44",
+		OSVendor:      "Linux",
 		Products: []Product{
 			{Category: "anti-malware", Vendor: "CrowdStrike, Inc.", Name: "Crowdstrike Falcon", Version: "7.40", State: "yes"},
 			{Category: "firewall", Vendor: "IPTables", Name: "IPTables", Version: "1.8.11", State: "no"},
@@ -24,7 +25,7 @@ func TestBuild(t *testing.T) {
 		},
 		Facts: Facts{
 			Drives:     []Drive{{Name: "/", Encrypted: false}, {Name: "/home/alice", Encrypted: true}},
-			Interfaces: []Interface{{Name: "wlp0s20f3", MAC: "b6:27:7a:bc:58:c0", IPv4: []string{"192.168.1.113"}}},
+			Interfaces: []Interface{{Name: "wlp0s20f3", MAC: "02:00:00:00:00:01", IPv4: []string{"192.0.2.113"}}},
 		},
 		Now: time.Date(2026, 10, 15, 1, 2, 3, 0, time.UTC),
 	})
@@ -43,8 +44,8 @@ func TestBuild(t *testing.T) {
 		`<client-version>6.2.8-1057</client-version>`,
 		`<os>Linux Fedora 44</os>`,
 		`<domain>example.com</domain>`,
-		`<mac-address>b6:27:7a:bc:58:c0</mac-address>`,
-		`<entry name="192.168.1.113"></entry>`,
+		`<mac-address>02:00:00:00:00:01</mac-address>`,
+		`<entry name="192.0.2.113"></entry>`,
 		`<Prod vendor="CrowdStrike, Inc." name="Crowdstrike Falcon" version="7.40" prodType="3" osType="1"></Prod>`,
 		`<real-time-protection>yes</real-time-protection>`,
 		`<is-enabled>no</is-enabled>`,

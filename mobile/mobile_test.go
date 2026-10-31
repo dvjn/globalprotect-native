@@ -2,9 +2,11 @@ package mobile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,13 +14,14 @@ import (
 	"github.com/dvjn/globalprotect-native/internal/control"
 	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/gp"
+	"github.com/dvjn/globalprotect-native/internal/hip"
 )
 
 type fakeApp struct {
 	lock      sync.Mutex
 	protected []int
 	refuse    bool
-	inventory string
+	profile   string
 }
 
 func (app *fakeApp) Protect(fd int) bool {
@@ -30,7 +33,7 @@ func (app *fakeApp) Protect(fd int) bool {
 
 func (app *fakeApp) Establish(*TunnelConfig) (int, error) { return -1, errors.New("no VPN in tests") }
 func (app *fakeApp) DNSServer() string                    { return "" }
-func (app *fakeApp) HIPInventory() string                 { return app.inventory }
+func (app *fakeApp) HIPProfile() string                   { return app.profile }
 func (app *fakeApp) Log(string)                           {}
 
 func TestDialerProtectsSockets(t *testing.T) {
@@ -82,16 +85,51 @@ func TestTunnelConfig(t *testing.T) {
 	}
 }
 
-func TestHIPInventory(t *testing.T) {
-	app := &fakeApp{inventory: `{"products": [{"category": "anti-malware", "vendor": "V", "name": "N", "version": "1", "state": "yes"}],
+func TestHIPProfile(t *testing.T) {
+	app := &fakeApp{profile: `{"os_vendor": "Google", "products": [{"category": "anti-malware", "vendor": "V", "name": "N", "version": "1", "state": "yes"}],
 		"drives": [{"name": "/data", "encrypted": true}], "interfaces": [{"name": "wlan0", "mac": "02:00:00:00:00:01", "ipv4": ["192.168.1.5"]}]}`}
-	products, facts := newPlatform(app).HIPInventory()
-	if len(products) != 1 || products[0].State != "yes" || len(facts.Drives) != 1 || !facts.Drives[0].Encrypted ||
-		len(facts.Interfaces) != 1 || facts.Interfaces[0].IPv4[0] != "192.168.1.5" {
-		t.Errorf("got %+v, %+v", products, facts)
+	detected := newPlatform(app).HIPProfile()
+	if detected.OSVendor != "Google" || len(detected.Products) != 1 || detected.Products[0].State != "yes" ||
+		len(detected.Drives) != 1 || !detected.Drives[0].Encrypted || detected.Interfaces[0].IPv4[0] != "192.168.1.5" {
+		t.Errorf("got %+v", detected)
 	}
-	if products, facts := newPlatform(&fakeApp{}).HIPInventory(); products != nil || facts.Drives != nil {
-		t.Errorf("an empty inventory gave %+v, %+v", products, facts)
+	if empty := newPlatform(&fakeApp{}).HIPProfile(); empty.Products != nil || empty.Drives != nil {
+		t.Errorf("an app that detects nothing gave %+v", empty)
+	}
+}
+
+// A profile exported from a laptop and imported on the phone reports the laptop, and logs in
+// as it.
+func TestImportedHIPProfile(t *testing.T) {
+	settings := `{"portal": "vpn.example.com",
+		"credential": {"username": "alice@example.com"},
+		"identity": {"host_id": "phone-id", "computer": "Pixel", "os_version": "Android 17", "client_version": "6.2.8-1057"},
+		"hip_profile": {"os": "Linux Fedora 44", "computer": "laptop", "host_id": "laptop-id",
+			"products": [{"category": "firewall", "vendor": "Red Hat, Inc.", "name": "Firewalld", "version": "2.3", "state": "yes"}]}}`
+	app := &fakeApp{profile: `{"os_vendor": "Google", "drives": [{"name": "/data", "encrypted": true}]}`}
+
+	exported, err := ExportHIPProfile(settings, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile hip.Profile
+	if err := json.Unmarshal([]byte(exported), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.OS != "Linux Fedora 44" || profile.Computer != "laptop" || profile.HostID != "laptop-id" ||
+		profile.OSVendor != "Google" || profile.HostDomain != "example.com" || profile.ClientVersion != "6.2.8-1057" ||
+		len(profile.Products) != 1 || len(profile.Drives) != 1 {
+		t.Errorf("exported %s", exported)
+	}
+
+	report, err := PreviewHIPReport(settings, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"<host-name>laptop</host-name>", "<host-id>laptop-id</host-id>", "Firewalld", "Linux Fedora 44"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report lacks %s:\n%s", want, report)
+		}
 	}
 }
 
