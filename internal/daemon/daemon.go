@@ -22,7 +22,6 @@ import (
 	"github.com/dvjn/globalprotect-native/internal/config"
 	"github.com/dvjn/globalprotect-native/internal/control"
 	"github.com/dvjn/globalprotect-native/internal/engine"
-	"github.com/dvjn/globalprotect-native/internal/gp"
 	"github.com/dvjn/globalprotect-native/internal/platform/linux"
 	"github.com/dvjn/globalprotect-native/internal/profile"
 )
@@ -431,7 +430,7 @@ func (server *daemon) run(ctx context.Context, finished chan struct{}, superviso
 	err := supervisor.Run(ctx)
 	final := control.Status{State: control.StateDisconnected}
 	switch {
-	case errors.Is(err, gp.ErrAuthenticationRejected):
+	case engine.NeedsLogin(err):
 		final = control.Status{State: control.StateNeedsLogin, Error: err.Error()}
 	case err != nil:
 		final = control.Status{State: control.StateFailed, Error: err.Error()}

@@ -45,6 +45,17 @@ func TestRoutingDomains(t *testing.T) {
 	}
 }
 
+func TestEntriesRoundTrip(t *testing.T) {
+	domains := NewDomains([]string{"*.corp.example", "Wiki.example.org:443", "corp.example", "corp.example"})
+	got := domains.Entries()
+	if want := []string{"*.corp.example", "corp.example", "wiki.example.org"}; !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if again := NewDomains(got).Entries(); !slices.Equal(again, got) {
+		t.Errorf("read back as %q", again)
+	}
+}
+
 func answer(t *testing.T, question string, records ...dnsmessage.Resource) []byte {
 	t.Helper()
 	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{Response: true})

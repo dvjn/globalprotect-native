@@ -10,7 +10,7 @@ import (
 const module = "github.com/dvjn/globalprotect-native/"
 
 // portable packages build for any OS: an Android or macOS app links them, and supplies its own
-// engine.Platform.
+// engine.Platform. mobile is the Android app's.
 var portable = []string{
 	"internal/config",
 	"internal/control",
@@ -21,6 +21,7 @@ var portable = []string{
 	"internal/split",
 	"internal/state",
 	"internal/tunnel",
+	"mobile",
 }
 
 // platformOnly are what portable packages may not depend on, even indirectly.
@@ -55,7 +56,7 @@ func TestImporters(t *testing.T) {
 	allowed := map[string][]string{
 		"internal/platform/linux": {"cmd/gpn", "internal/daemon"},
 		"internal/daemon":         {"cmd/gpn"},
-		"internal/engine":         {"cmd/gpn", "internal/daemon", "internal/platform/linux", "internal/profile"},
+		"internal/engine":         {"cmd/gpn", "internal/daemon", "internal/platform/linux", "internal/profile", "mobile"},
 	}
 	output, err := exec.Command("go", "list", "-f", `{{.ImportPath}} {{join .Imports " "}}`, module+"...").Output()
 	if err != nil {

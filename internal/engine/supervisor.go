@@ -27,6 +27,12 @@ type permanentError struct{ err error }
 func (permanent permanentError) Error() string { return permanent.err.Error() }
 func (permanent permanentError) Unwrap() error { return permanent.err }
 
+// NeedsLogin reports whether the tunnel stopped because the portal or gateway rejected the
+// saved login.
+func NeedsLogin(err error) bool {
+	return errors.Is(err, gp.ErrAuthenticationRejected)
+}
+
 func isPermanent(err error) bool {
 	var permanent permanentError
 	return errors.As(err, &permanent)
@@ -90,7 +96,7 @@ func (supervisor *Supervisor) Run(ctx context.Context) error {
 		switch {
 		case ctx.Err() != nil:
 			return nil
-		case errors.Is(err, gp.ErrAuthenticationRejected), isPermanent(err):
+		case NeedsLogin(err), isPermanent(err):
 			return err
 		}
 

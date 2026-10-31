@@ -68,3 +68,16 @@ func (domains Domains) RoutingDomains() []string {
 	slices.Sort(routing)
 	return slices.Compact(routing)
 }
+
+// Entries lists the entries in the syntax NewDomains reads, sorted.
+func (domains Domains) Entries() []string {
+	var entries []string
+	for host := range domains.exact {
+		entries = append(entries, host)
+	}
+	for _, suffix := range domains.suffixes {
+		entries = append(entries, "*"+suffix)
+	}
+	slices.Sort(entries)
+	return slices.Compact(entries)
+}
