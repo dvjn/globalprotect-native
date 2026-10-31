@@ -2,3 +2,10 @@
 /captures/
 /dist/
 /docs/
+/android/.gradle/
+/android/.idea/
+/android/.kotlin/
+/android/build/
+/android/app/build/
+/android/app/libs/
+/android/local.properties

@@ -1,12 +1,16 @@
 [tools]
 go = "1.27.3"
 nfpm = "2.48.0"
+# gomobile compiles the Android core's Java bindings with javac.
+java = "temurin-21.0.13+9.0.LTS"
 
 [env]
 VERSION = "0.2.0" # x-release-please-version
 # A static binary runs on any distribution the packages target. Without cgo, user and group
 # lookups read /etc/passwd and /etc/group only, not SSSD or LDAP.
 CGO_ENABLED = "0"
+# Android Studio's SDK Manager installs the SDK and the NDK here.
+ANDROID_HOME = "{{env.HOME}}/Android/Sdk"
 
 [tasks.build]
 description = "Build bin/gpn"
@@ -33,4 +37,28 @@ run = [
   "nfpm package --config packaging/nfpm.yaml --packager deb --target dist/",
   "nfpm package --config packaging/nfpm.yaml --packager archlinux --target dist/",
   "cd dist && sha256sum *.rpm *.deb *.pkg.tar.zst > SHA256SUMS",
+]
+
+[tasks."android:core"]
+description = "Build the Go core of the Android app into android/app/libs/core.aar"
+env = { CGO_ENABLED = "1" }
+run = [
+  "mkdir -p bin android/app/libs",
+  "go build -o bin/ golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind",
+  "PATH=\"$PWD/bin:$PATH\" gomobile bind -target=android/arm64,android/amd64 -androidapi 29 -javapkg dev.dvjn.gpn -trimpath -o android/app/libs/core.aar ./mobile",
+]
+
+[tasks."android:app"]
+description = "Build the Android app's debug APK, with the Go core"
+depends = ["android:core"]
+dir = "android"
+run = "./gradlew --console=plain assembleDebug"
+
+[tasks."android:install"]
+description = "Install the debug APK on the connected device and open it"
+depends = ["android:core"]
+dir = "android"
+run = [
+  "./gradlew --console=plain installDebug",
+  "$ANDROID_HOME/platform-tools/adb shell am start -n dev.dvjn.gpn/.MainActivity",
 ]
