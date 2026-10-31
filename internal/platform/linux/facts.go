@@ -1,36 +1,18 @@
-package hip
+package linux
 
 import (
 	"net"
 	"os/exec"
 	"strings"
+
+	"github.com/dvjn/globalprotect-native/internal/hip"
 )
 
-// Drive is the encryption state of the file system holding one path.
-type Drive struct {
-	Name      string
-	Encrypted bool
-}
-
-// Interface is a network interface with its addresses.
-type Interface struct {
-	Name string
-	MAC  string
-	IPv4 []string
-	IPv6 []string
-}
-
-// Facts is what gpn observes about the machine's disks and network.
-type Facts struct {
-	Drives     []Drive
-	Interfaces []Interface
-}
-
-// CollectFacts inspects the machine. drivePaths are the paths whose file systems the report covers.
-func CollectFacts(drivePaths []string) Facts {
-	var facts Facts
+// collectFacts inspects the machine. drivePaths are the paths whose file systems the report covers.
+func collectFacts(drivePaths []string) hip.Facts {
+	var facts hip.Facts
 	for _, path := range drivePaths {
-		facts.Drives = append(facts.Drives, Drive{Name: path, Encrypted: isEncrypted(path)})
+		facts.Drives = append(facts.Drives, hip.Drive{Name: path, Encrypted: isEncrypted(path)})
 	}
 	facts.Interfaces = hardwareInterfaces()
 	return facts
@@ -56,18 +38,18 @@ func isEncrypted(path string) bool {
 
 // hardwareInterfaces lists the interfaces that have a MAC address, as the official client
 // does. Loopback and tunnel devices have none.
-func hardwareInterfaces() []Interface {
+func hardwareInterfaces() []hip.Interface {
 	links, err := net.Interfaces()
 	if err != nil {
 		return nil
 	}
 
-	var interfaces []Interface
+	var interfaces []hip.Interface
 	for _, link := range links {
 		if len(link.HardwareAddr) == 0 {
 			continue
 		}
-		found := Interface{Name: link.Name, MAC: link.HardwareAddr.String()}
+		found := hip.Interface{Name: link.Name, MAC: link.HardwareAddr.String()}
 		addresses, _ := link.Addrs()
 		for _, address := range addresses {
 			ip, _, err := net.ParseCIDR(address.String())

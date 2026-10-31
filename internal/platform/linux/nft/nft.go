@@ -1,4 +1,6 @@
-package split
+// Package nft keeps the nftables table that marks split traffic, so policy routing can send
+// it around or through the tunnel.
+package nft
 
 import (
 	"fmt"
@@ -6,11 +8,9 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-)
 
-// Mark is the firewall mark of split traffic. An ip rule sends it to the main table when it
-// goes around the tunnel, or to the tunnel's table when it goes through it.
-const Mark = 0x4501
+	"github.com/dvjn/globalprotect-native/internal/split"
+)
 
 const tableName = "gpn"
 
@@ -18,30 +18,17 @@ const tableName = "gpn"
 // Open connections stay split beyond it through their conntrack mark.
 const minimumTimeout = 5 * time.Minute
 
-// Direction is where marked traffic goes.
-type Direction int
-
-const (
-	// Around sends marked traffic outside the tunnel.
-	Around Direction = iota
-	// Through sends marked traffic into the tunnel.
-	Through
-)
-
 // Firewall is the nftables table that marks and masquerades split traffic.
-type Firewall struct {
-	device    string
-	direction Direction
-}
+type Firewall struct{}
 
 // InstallFirewall creates the table. Traffic to an address in its set gets a conntrack mark;
 // every packet of a marked connection gets the firewall mark, which reroutes it, and leaves
 // with its source rewritten when the route the socket first chose went through another device.
 // Around, that is every marked packet not leaving through the tunnel device; through, every
 // marked packet leaving through it.
-func InstallFirewall(device string, direction Direction) (*Firewall, error) {
+func InstallFirewall(device string, direction split.Direction, mark int) (*Firewall, error) {
 	outgoing := "!="
-	if direction == Through {
+	if direction == split.Through {
 		outgoing = "=="
 	}
 	script := fmt.Sprintf(`table ip %[1]s {
@@ -59,11 +46,11 @@ func InstallFirewall(device string, direction Direction) (*Firewall, error) {
 		meta mark %#[2]x oifname %[4]s %[3]q masquerade
 	}
 }
-`, tableName, Mark, device, outgoing)
+`, tableName, mark, device, outgoing)
 	if err := runNft(script); err != nil {
 		return nil, err
 	}
-	return &Firewall{device: device, direction: direction}, nil
+	return &Firewall{}, nil
 }
 
 // Add puts addresses into the set for ttl, or for minimumTimeout if that is longer.

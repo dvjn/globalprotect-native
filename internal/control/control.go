@@ -163,3 +163,15 @@ func readLine(reader *bufio.Reader, value any) error {
 	}
 	return json.Unmarshal(line, value)
 }
+
+// String describes the status in one line, such as "connected to gw over ESP as 10.0.0.2 (since 09:41:00)".
+func (status Status) String() string {
+	line := status.State
+	if status.Gateway != "" {
+		line += fmt.Sprintf(" to %s over %s as %s", status.Gateway, status.Transport, status.ClientIP)
+	}
+	if status.Error != "" {
+		line += ": " + status.Error
+	}
+	return fmt.Sprintf("%s (since %s)", line, status.Since.Format(time.TimeOnly))
+}

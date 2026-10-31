@@ -1,4 +1,6 @@
-package main
+// Package desktop is gpn in the user's desktop session: the agent with its tray icon and
+// notifications, the browser login, and the per-user setup.
+package desktop
 
 import (
 	"fmt"
@@ -13,11 +15,11 @@ const (
 	agentUnit           = "gpn-agent.service"
 )
 
-// setUpDesktop finishes the per-user part of an install the first time the user runs gpn:
+// SetUp finishes the per-user part of an install the first time the user runs gpn:
 // gpn becomes the handler for login callbacks, and the agent is enabled as a user service that
 // starts now and with each desktop login. Both steps are skipped when already done or when the
 // package did not install their files.
-func setUpDesktop() {
+func SetUp() {
 	if handler, err := exec.Command("xdg-mime", "query", "default", callbackMimeType).Output(); err == nil &&
 		strings.TrimSpace(string(handler)) != callbackDesktopFile && installed("/usr/share/applications/"+callbackDesktopFile) {
 		if exec.Command("xdg-mime", "default", callbackDesktopFile, callbackMimeType).Run() == nil {

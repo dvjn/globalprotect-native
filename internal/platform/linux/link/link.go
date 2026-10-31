@@ -1,5 +1,5 @@
-// Package tun creates and configures a Linux TUN device.
-package tun
+// Package link creates TUN devices and gives network links their address.
+package link
 
 import (
 	"fmt"
@@ -8,8 +8,6 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
-
-	"github.com/dvjn/globalprotect-native/internal/route"
 )
 
 // Device is a TUN device. Closing it deletes the device and every route through it.
@@ -58,7 +56,7 @@ func (device *Device) Configure(address net.IP, mtu int) error {
 
 // ConfigureLink gives link the host address and brings it up.
 func ConfigureLink(link netlink.Link, address net.IP) error {
-	if err := netlink.AddrAdd(link, &netlink.Addr{IPNet: route.HostPrefix(address)}); err != nil {
+	if err := netlink.AddrAdd(link, &netlink.Addr{IPNet: HostPrefix(address)}); err != nil {
 		return fmt.Errorf("add address %s: %w", address, err)
 	}
 	return netlink.LinkSetUp(link)
@@ -75,4 +73,12 @@ func (device *Device) Write(packet []byte) (int, error) {
 // Close deletes the device.
 func (device *Device) Close() error {
 	return device.file.Close()
+}
+
+// HostPrefix is the /32 or /128 prefix holding only address.
+func HostPrefix(address net.IP) *net.IPNet {
+	if ipv4 := address.To4(); ipv4 != nil {
+		return &net.IPNet{IP: ipv4, Mask: net.CIDRMask(32, 32)}
+	}
+	return &net.IPNet{IP: address, Mask: net.CIDRMask(128, 128)}
 }

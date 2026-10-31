@@ -11,6 +11,8 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+
+	"github.com/dvjn/globalprotect-native/internal/platform/linux/link"
 )
 
 // Table is the routing table that holds the tunnel's routes.
@@ -61,7 +63,7 @@ func Apply(plan Plan) (*Routing, error) {
 }
 
 func (routing *Routing) install(plan Plan) error {
-	link, err := netlink.LinkByName(plan.Device)
+	device, err := netlink.LinkByName(plan.Device)
 	if err != nil {
 		return err
 	}
@@ -70,7 +72,7 @@ func (routing *Routing) install(plan Plan) error {
 	}
 
 	for _, destination := range plan.IncludeRoutes {
-		route := &netlink.Route{LinkIndex: link.Attrs().Index, Dst: destination, Scope: netlink.SCOPE_LINK, Table: Table}
+		route := &netlink.Route{LinkIndex: device.Attrs().Index, Dst: destination, Scope: netlink.SCOPE_LINK, Table: Table}
 		if err := netlink.RouteAdd(route); err != nil {
 			return fmt.Errorf("add route %s to table %d: %w", destination, Table, err)
 		}
@@ -78,7 +80,7 @@ func (routing *Routing) install(plan Plan) error {
 	}
 
 	for _, gateway := range plan.Gateways {
-		if err := routing.addRule(toMain(HostPrefix(gateway))); err != nil {
+		if err := routing.addRule(toMain(link.HostPrefix(gateway))); err != nil {
 			return err
 		}
 	}
@@ -196,12 +198,4 @@ func disableIPv6(device string) error {
 		return fmt.Errorf("disable IPv6 on %s: %w", device, err)
 	}
 	return nil
-}
-
-// HostPrefix is the /32 or /128 prefix holding only address.
-func HostPrefix(address net.IP) *net.IPNet {
-	if ipv4 := address.To4(); ipv4 != nil {
-		return &net.IPNet{IP: ipv4, Mask: net.CIDRMask(32, 32)}
-	}
-	return &net.IPNet{IP: address, Mask: net.CIDRMask(128, 128)}
 }

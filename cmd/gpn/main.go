@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+
+	"github.com/dvjn/globalprotect-native/internal/desktop"
 )
 
 const usage = `gpn: globalprotect-native, a GlobalProtect client for Linux
@@ -44,7 +46,7 @@ func main() {
 	command, args := os.Args[1], os.Args[2:]
 	switch command {
 	case "connect", "disconnect", "reconnect", "status", "login":
-		setUpDesktop()
+		desktop.SetUp()
 	}
 
 	var err error

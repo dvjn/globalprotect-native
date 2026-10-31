@@ -1,12 +1,15 @@
-// Package device reads this machine's identity: the values the official client reports.
-package device
+package linux
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/dvjn/globalprotect-native/internal/config"
+	"github.com/dvjn/globalprotect-native/internal/gp"
 )
 
 // fallbackClientVersion is reported when the official client is not installed.
@@ -19,8 +22,8 @@ const (
 	serialPath      = "/sys/class/dmi/id/product_serial"
 )
 
-// ProductUUID returns the SMBIOS product UUID, which the official client sends as its host ID.
-func ProductUUID() (string, error) {
+// productUUID returns the SMBIOS product UUID, which the official client sends as its host ID.
+func productUUID() (string, error) {
 	if os.Geteuid() == 0 {
 		return readSysfs(productUUIDPath)
 	}
@@ -37,8 +40,8 @@ func ProductUUID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16]), nil
 }
 
-// HardwareSerial returns the machine's serial number, such as a Dell service tag.
-func HardwareSerial() (string, error) {
+// hardwareSerial returns the machine's serial number, such as a Dell service tag.
+func hardwareSerial() (string, error) {
 	if os.Geteuid() == 0 {
 		return readSysfs(serialPath)
 	}
@@ -81,4 +84,51 @@ func callHostnamed(reply any, method string, arguments ...string) error {
 		return fmt.Errorf("hostnamed %s: %w", method, err)
 	}
 	return json.Unmarshal(output, reply)
+}
+
+// Identify describes the machine as the official Linux client does, with the device's own
+// identity when the settings ask for it.
+func Identify(clientVersion string) func(config.Config, string) (gp.Identity, error) {
+	return func(settings config.Config, hostID string) (gp.Identity, error) {
+		serialNumber := ""
+		if settings.DeviceIdentity {
+			var err error
+			if hostID, err = productUUID(); err != nil {
+				return gp.Identity{}, fmt.Errorf("read the device identity (set device_identity: false to skip): %w", err)
+			}
+			if serialNumber, err = hardwareSerial(); err != nil {
+				return gp.Identity{}, fmt.Errorf("read the device identity (set device_identity: false to skip): %w", err)
+			}
+		}
+		computer, err := os.Hostname()
+		if err != nil {
+			return gp.Identity{}, err
+		}
+		return gp.Identity{
+			HostID:        hostID,
+			SerialNumber:  serialNumber,
+			Computer:      computer,
+			OSVersion:     osName(),
+			ClientVersion: clientVersion,
+		}, nil
+	}
+}
+
+// osName describes the OS the way the official Linux client does, such as "Linux Fedora 44".
+func osName() string {
+	file, err := os.Open("/etc/os-release")
+	if err != nil {
+		return "Linux"
+	}
+	defer file.Close()
+
+	release := map[string]string{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if key, value, found := strings.Cut(scanner.Text(), "="); found {
+			release[key] = strings.Trim(value, `"`)
+		}
+	}
+	distribution := strings.TrimSuffix(release["NAME"], " Linux")
+	return strings.TrimSpace("Linux " + distribution + " " + release["VERSION_ID"])
 }

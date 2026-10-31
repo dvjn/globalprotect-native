@@ -1,21 +1,13 @@
-package hip
+package linux
 
 import (
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
-)
 
-// Product is one detected security product in a HIP category.
-// State is "yes", "no" or "n/a": real-time protection for anti-malware, enabled otherwise.
-type Product struct {
-	Category string
-	Vendor   string
-	Name     string
-	Version  string
-	State    string
-}
+	"github.com/dvjn/globalprotect-native/internal/hip"
+)
 
 // knownProduct is a product the official client's OPSWAT scan reports on Fedora,
 // with the vendor and name strings it uses.
@@ -51,9 +43,9 @@ var catalog = []knownProduct{
 		packages: []string{"flatpak"}, state: "n/a"},
 }
 
-// DetectProducts returns the catalog products installed on this machine.
-func DetectProducts() []Product {
-	var detected []Product
+// detectProducts returns the catalog products installed on this machine.
+func detectProducts() []hip.Product {
+	var detected []hip.Product
 	for _, known := range catalog {
 		version, installed := installedVersion(known.packages)
 		if !installed {
@@ -67,9 +59,12 @@ func DetectProducts() []Product {
 
 		state := known.state
 		if known.unit != "" {
-			state = yesNo(exec.Command("systemctl", "is-active", "--quiet", known.unit).Run() == nil)
+			state = "no"
+			if exec.Command("systemctl", "is-active", "--quiet", known.unit).Run() == nil {
+				state = "yes"
+			}
 		}
-		detected = append(detected, Product{
+		detected = append(detected, hip.Product{
 			Category: known.category,
 			Vendor:   known.vendor,
 			Name:     known.name,

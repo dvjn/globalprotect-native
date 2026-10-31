@@ -1,20 +1,23 @@
-package main
+// Package linux runs the engine's tunnel on Linux as root: kernel ESP on an XFRM interface or a
+// TUN device, policy routing, systemd-resolved and, for split domains, nftables.
+package linux
 
 import (
 	"errors"
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 
-	"github.com/dvjn/globalprotect-native/internal/dns"
 	"github.com/dvjn/globalprotect-native/internal/engine"
 	"github.com/dvjn/globalprotect-native/internal/gp"
 	"github.com/dvjn/globalprotect-native/internal/hip"
-	"github.com/dvjn/globalprotect-native/internal/route"
+	"github.com/dvjn/globalprotect-native/internal/platform/linux/dns"
+	"github.com/dvjn/globalprotect-native/internal/platform/linux/link"
+	"github.com/dvjn/globalprotect-native/internal/platform/linux/nft"
+	"github.com/dvjn/globalprotect-native/internal/platform/linux/route"
+	"github.com/dvjn/globalprotect-native/internal/platform/linux/xfrm"
 	"github.com/dvjn/globalprotect-native/internal/split"
-	"github.com/dvjn/globalprotect-native/internal/tun"
-	"github.com/dvjn/globalprotect-native/internal/xfrm"
 )
 
 const deviceName = "gpn0"
@@ -22,27 +25,40 @@ const deviceName = "gpn0"
 // espInterfaceID is the XFRM if_id that ties gpn's ESP policies to its interface.
 const espInterfaceID = 0x4501
 
-// linuxPlatform runs the engine's tunnel as root: kernel ESP on an XFRM interface or a TUN
-// device, policy routing, systemd-resolved and, for split domains, nftables.
-type linuxPlatform struct {
-	// userHome is reported as a drive next to "/".
-	userHome string
+// splitMark is the firewall mark of split traffic. An ip rule sends it to the main table when
+// it goes around the tunnel, or to the tunnel's table when it goes through it.
+const splitMark = 0x4501
+
+// Platform implements engine.Platform.
+type Platform struct {
+	// UserHome is reported to the HIP check as a drive next to "/".
+	UserHome string
+	// Log receives what goes wrong in the background, such as failed DNS queries; nil sends it
+	// to stderr.
+	Log *log.Logger
+}
+
+func (platform Platform) logger() *log.Logger {
+	if platform.Log == nil {
+		return log.New(os.Stderr, "", 0)
+	}
+	return platform.Log
 }
 
 // Dialer is the default: policy routing keeps the gateways outside the tunnel.
-func (linuxPlatform) Dialer() *net.Dialer {
+func (Platform) Dialer() *net.Dialer {
 	return nil
 }
 
-func (linuxPlatform) RemoveLeftovers() error {
-	return removeLeftovers()
+func (Platform) RemoveLeftovers() error {
+	return RemoveLeftovers()
 }
 
-func (linuxPlatform) OuterAddress(gateway net.IP) (net.IP, error) {
+func (Platform) OuterAddress(gateway net.IP) (net.IP, error) {
 	return xfrm.OuterAddress(gateway)
 }
 
-func (linuxPlatform) OpenESP(network engine.Network, config gp.ESPConfig) (engine.ESP, error) {
+func (Platform) OpenESP(network engine.Network, config gp.ESPConfig) (engine.ESP, error) {
 	esp, err := xfrm.OpenESP(deviceName, espInterfaceID, network.ClientIP, network.Gateway, network.MTU, config)
 	if err != nil {
 		return nil, err
@@ -50,8 +66,8 @@ func (linuxPlatform) OpenESP(network engine.Network, config gp.ESPConfig) (engin
 	return esp, nil
 }
 
-func (linuxPlatform) OpenDevice(network engine.Network) (io.ReadWriteCloser, error) {
-	device, err := tun.Create(deviceName)
+func (Platform) OpenDevice(network engine.Network) (io.ReadWriteCloser, error) {
+	device, err := link.Create(deviceName)
 	if err != nil {
 		return nil, err
 	}
@@ -62,17 +78,17 @@ func (linuxPlatform) OpenDevice(network engine.Network) (io.ReadWriteCloser, err
 	return device, nil
 }
 
-func (platform linuxPlatform) HIPInventory() ([]hip.Product, hip.Facts) {
+func (platform Platform) HIPInventory() ([]hip.Product, hip.Facts) {
 	drives := []string{"/"}
-	if platform.userHome != "" {
-		drives = append(drives, platform.userHome)
+	if platform.UserHome != "" {
+		drives = append(drives, platform.UserHome)
 	}
-	return hip.DetectProducts(), hip.CollectFacts(drives)
+	return detectProducts(), collectFacts(drives)
 }
 
 // ApplyNetwork installs the routes, the split-domain forwarder and the DNS settings on the
 // tunnel device, and returns how to undo them in reverse order.
-func (linuxPlatform) ApplyNetwork(network engine.Network) (undo func(), err error) {
+func (platform Platform) ApplyNetwork(network engine.Network) (undo func(), err error) {
 	var undoSteps []func() error
 	undo = func() {
 		var errs []error
@@ -80,7 +96,7 @@ func (linuxPlatform) ApplyNetwork(network engine.Network) (undo func(), err erro
 			errs = append(errs, undoSteps[i]())
 		}
 		if err := errors.Join(errs...); err != nil {
-			fmt.Fprintln(os.Stderr, "Cleanup failed:", err)
+			platform.logger().Println("Cleanup failed:", err)
 		}
 	}
 	defer func() {
@@ -97,13 +113,14 @@ func (linuxPlatform) ApplyNetwork(network engine.Network) (undo func(), err erro
 
 	dnsSettings := dnsSettings(network)
 	if !network.Domains.Empty() {
-		firewall, err := split.InstallFirewall(deviceName, splitDirection(network))
+		firewall, err := nft.InstallFirewall(deviceName, splitDirection(network), splitMark)
 		if err != nil {
 			return nil, err
 		}
 		undoSteps = append(undoSteps, firewall.Remove)
 
-		forwarder, err := split.StartForwarder(network.ClientIP, network.DNSServers, network.Domains, firewall, logger)
+		forwarder, err := split.StartForwarder(network.ClientIP, network.DNSServers, network.Domains,
+			splitDirection(network), firewall, platform.logger())
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +136,7 @@ func (linuxPlatform) ApplyNetwork(network engine.Network) (undo func(), err erro
 	return undo, nil
 }
 
-// routingPlan is the policy routing for the network. Matched split domains carry split.Mark,
+// routingPlan is the policy routing for the network. Matched split domains carry splitMark,
 // which sends them around the tunnel or, include-only, through it.
 func routingPlan(network engine.Network) route.Plan {
 	plan := route.Plan{
@@ -131,7 +148,7 @@ func routingPlan(network engine.Network) route.Plan {
 	if !network.IncludeOnly {
 		plan.IncludeRoutes = network.Routes
 		if !network.Domains.Empty() {
-			plan.ExcludeMark = split.Mark
+			plan.ExcludeMark = splitMark
 		}
 		return plan
 	}
@@ -140,7 +157,7 @@ func routingPlan(network engine.Network) route.Plan {
 	plan.IncludeRoutes = []*net.IPNet{{IP: net.IPv4zero.To4(), Mask: net.CIDRMask(0, 32)}}
 	plan.OnlyRoutes = network.Routes
 	if !network.Domains.Empty() {
-		plan.OnlyMark = split.Mark
+		plan.OnlyMark = splitMark
 	}
 	return plan
 }
@@ -165,30 +182,14 @@ func splitDirection(network engine.Network) split.Direction {
 	return split.Around
 }
 
-// runCleanup removes what a killed daemon left behind, so the network works again without it.
-func runCleanup(args []string) error {
-	if len(args) != 0 {
-		return errors.New("usage: gpn cleanup")
-	}
-	if os.Geteuid() != 0 {
-		return errors.New("cleanup changes network settings; run it as root")
-	}
-	lock, err := lockDaemon()
-	if err != nil {
-		return fmt.Errorf("%w; stop it instead, it cleans up after itself", err)
-	}
-	defer lock.Close()
-	return removeLeftovers()
-}
-
-// removeLeftovers deletes rules, the tunnel device, XFRM state, the split table and a
+// RemoveLeftovers deletes rules, the tunnel device, XFRM state, the split table and a
 // replaced resolv.conf that an earlier run did not get to remove. resolved forgets the
 // device's DNS settings together with the device.
-func removeLeftovers() error {
+func RemoveLeftovers() error {
 	return errors.Join(
 		route.RemoveLeftovers(),
 		dns.RestoreLeftovers(),
-		split.RemoveLeftovers(),
+		nft.RemoveLeftovers(),
 		xfrm.RemoveLeftovers(deviceName, espInterfaceID),
 	)
 }

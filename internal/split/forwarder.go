@@ -14,9 +14,25 @@ import (
 
 const upstreamTimeout = 5 * time.Second
 
+// Direction is where traffic to matching names goes.
+type Direction int
+
+const (
+	// Around sends it outside the tunnel.
+	Around Direction = iota
+	// Through sends it into the tunnel.
+	Through
+)
+
+// AddressSink learns the addresses that matching names resolve to, for at least ttl, and splits
+// the traffic to them.
+type AddressSink interface {
+	Add(addresses []net.IP, ttl time.Duration) error
+}
+
 // Forwarder relays DNS queries to the tunnel's servers. Before it returns an answer for a
-// matching name, it adds the answer's addresses to the firewall set, so the connection that
-// follows is already split.
+// matching name, it gives the answer's addresses to its sink, so the connection that follows
+// is already split.
 //
 // When matching names go through the tunnel, it answers their AAAA queries with no addresses:
 // only IPv4 is split, and an IPv6 connection would leave outside the tunnel.
@@ -25,13 +41,14 @@ type Forwarder struct {
 	tcp       *net.TCPListener
 	upstreams []string
 	domains   Domains
-	firewall  *Firewall
+	direction Direction
+	sink      AddressSink
 	log       *log.Logger
 }
 
 // StartForwarder listens on address port 53 over UDP and TCP, and tells logger about failed
 // queries.
-func StartForwarder(address net.IP, upstreams []string, domains Domains, firewall *Firewall, logger *log.Logger) (*Forwarder, error) {
+func StartForwarder(address net.IP, upstreams []string, domains Domains, direction Direction, sink AddressSink, logger *log.Logger) (*Forwarder, error) {
 	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: address, Port: 53})
 	if err != nil {
 		return nil, fmt.Errorf("DNS forwarder: %w", err)
@@ -42,7 +59,7 @@ func StartForwarder(address net.IP, upstreams []string, domains Domains, firewal
 		return nil, fmt.Errorf("DNS forwarder: %w", err)
 	}
 
-	forwarder := &Forwarder{udp: udp, tcp: tcp, upstreams: upstreams, domains: domains, firewall: firewall, log: logger}
+	forwarder := &Forwarder{udp: udp, tcp: tcp, upstreams: upstreams, domains: domains, direction: direction, sink: sink, log: logger}
 	go forwarder.serveUDP()
 	go forwarder.serveTCP()
 	return forwarder, nil
@@ -102,7 +119,7 @@ func (forwarder *Forwarder) serveTCPConnection(connection net.Conn) {
 
 // exchange asks each upstream in turn and records matching addresses from the first answer.
 func (forwarder *Forwarder) exchange(network string, query []byte) ([]byte, error) {
-	if forwarder.firewall.direction == Through {
+	if forwarder.direction == Through {
 		if answer, blocked := withoutIPv6(query, forwarder.domains); blocked {
 			return answer, nil
 		}
@@ -144,13 +161,13 @@ func ask(network, upstream string, query []byte) ([]byte, error) {
 	return answer[:length], err
 }
 
-// recordMatched adds the IPv4 addresses of an answer to the firewall set when the question matches.
+// recordMatched gives the IPv4 addresses of an answer to the sink when the question matches.
 func (forwarder *Forwarder) recordMatched(answer []byte) error {
 	addresses, ttl, matched, err := matchedAddresses(answer, forwarder.domains)
 	if err != nil || !matched {
 		return err
 	}
-	return forwarder.firewall.Add(addresses, ttl)
+	return forwarder.sink.Add(addresses, ttl)
 }
 
 // withoutIPv6 returns an answer with no records when query asks for the AAAA records of a matching name.

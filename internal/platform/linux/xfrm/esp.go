@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/dvjn/globalprotect-native/internal/gp"
-	"github.com/dvjn/globalprotect-native/internal/tun"
+	"github.com/dvjn/globalprotect-native/internal/platform/linux/link"
 )
 
 // ESP carries traffic as ESP in UDP, with the kernel doing the encryption.
@@ -68,7 +68,7 @@ func OpenESP(name string, ifid uint32, clientIP, gateway net.IP, mtu int, config
 		esp.link = nil
 		return nil, fmt.Errorf("create %s: %w", name, err)
 	}
-	if err := tun.ConfigureLink(esp.link, clientIP); err != nil {
+	if err := link.ConfigureLink(esp.link, clientIP); err != nil {
 		return nil, err
 	}
 

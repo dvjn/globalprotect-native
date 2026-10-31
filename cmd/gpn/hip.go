@@ -8,6 +8,7 @@ import (
 	"os/signal"
 
 	"github.com/dvjn/globalprotect-native/internal/engine"
+	"github.com/dvjn/globalprotect-native/internal/platform/linux"
 	"github.com/dvjn/globalprotect-native/internal/userdir"
 )
 
@@ -50,7 +51,7 @@ func runHIP(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Gateway %s wants a HIP report: %t\n", opened.Gateway.Name, needed)
 
-	report, err := engine.BuildHIPReport(opened, gatewayConfig.ClientIP, linuxPlatform{userHome: home})
+	report, err := engine.BuildHIPReport(opened, gatewayConfig.ClientIP, linux.Platform{UserHome: home, Log: logger})
 	if err != nil {
 		return err
 	}

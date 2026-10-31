@@ -1,4 +1,4 @@
-package main
+package linux
 
 import (
 	"slices"
@@ -25,7 +25,7 @@ func TestLinuxPlanExcludes(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan, settings := routingPlan(network), dnsSettings(network)
-	if plan.IncludeOnly || settings.Selective || splitDirection(network) != split.Around || plan.ExcludeMark != split.Mark {
+	if plan.IncludeOnly || settings.Selective || splitDirection(network) != split.Around || plan.ExcludeMark != splitMark {
 		t.Errorf("got %+v, %+v", plan, settings)
 	}
 	if got := engine.JoinPrefixes(plan.IncludeRoutes); got != "0.0.0.0/0" {
@@ -43,7 +43,7 @@ func TestLinuxPlanIncludeOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := routingPlan(network)
-	if !plan.IncludeOnly || plan.ExcludeMark != 0 || plan.OnlyMark != split.Mark || splitDirection(network) != split.Through {
+	if !plan.IncludeOnly || plan.ExcludeMark != 0 || plan.OnlyMark != splitMark || splitDirection(network) != split.Through {
 		t.Errorf("got %+v", plan)
 	}
 	if got, want := engine.JoinPrefixes(plan.OnlyRoutes), "172.16.0.0/12 10.0.0.53/32"; got != want {

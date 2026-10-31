@@ -1,4 +1,4 @@
-package main
+package desktop
 
 import (
 	"bytes"
@@ -74,7 +74,7 @@ func startTray(ctx context.Context) *tray {
 
 func (t *tray) show(status control.Status) {
 	t.state.Store(status.State)
-	line := statusLine(status)
+	line := status.String()
 	systray.SetIcon(trayIcon(stateDots[status.State]))
 	systray.SetTooltip("GlobalProtect: " + line)
 	t.summary.SetTitle(line)
@@ -112,7 +112,7 @@ func (t *tray) connectOnClick(ctx context.Context) {
 	for range t.connect.ClickedCh {
 		var err error
 		if t.state.Load() == control.StateNeedsLogin {
-			err = browserLogin(ctx, "")
+			err = BrowserLogin(ctx, "")
 		} else {
 			_, err = control.Call(control.Request{Command: control.CommandConnect})
 		}

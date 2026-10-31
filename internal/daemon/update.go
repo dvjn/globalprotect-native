@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -26,18 +26,6 @@ const (
 	// start again soon after an update stopped it.
 	reconnectAfterUpdate = 15 * time.Minute
 )
-
-func runUpdate(args []string) error {
-	if len(args) != 0 {
-		return errors.New("usage: gpn update")
-	}
-	response, err := control.Call(control.Request{Command: control.CommandUpdate})
-	if err != nil {
-		return err
-	}
-	fmt.Println(response.Update)
-	return nil
-}
 
 // watchUpdates looks for a release now and then until ctx ends, while check_updates is on, and
 // tells clients about a newer one; installing it is up to the user. It reads the settings each
@@ -68,8 +56,8 @@ func (server *daemon) watchUpdates(ctx context.Context) {
 // to tell the user and, when there is a release to install, the install to run once they have
 // been told: the installer restarts the daemon, which could otherwise end before answering.
 func (server *daemon) prepareUpdate() (string, func(), error) {
-	if !update.IsRelease(currentVersion()) {
-		return "", nil, fmt.Errorf("gpn %s is a development build and cannot update itself", version)
+	if !update.IsRelease(server.currentVersion()) {
+		return "", nil, fmt.Errorf("gpn %s is a development build and cannot update itself", server.version)
 	}
 	if !server.updating.TryLock() {
 		return "", nil, errUpdating
@@ -88,7 +76,7 @@ func (server *daemon) prepareUpdate() (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	current := currentVersion()
+	current := server.currentVersion()
 	// One change, so the agent never sees the release as merely available and offers it.
 	server.changeReleases(func(releases *control.Update) {
 		releases.Available, releases.Installing, releases.Error = availableVersion(release, newer), newer, ""
@@ -137,7 +125,7 @@ func (server *daemon) latestRelease(ctx context.Context) (*update.Manager, updat
 	if err != nil {
 		return nil, update.Release{}, false, err
 	}
-	return manager, release, update.Newer(release.Version, currentVersion()), nil
+	return manager, release, update.Newer(release.Version, server.currentVersion()), nil
 }
 
 // availableVersion is what the status offers: the release's version when it is newer.
@@ -149,8 +137,8 @@ func availableVersion(release update.Release, newer bool) string {
 }
 
 // currentVersion is this build's release version, without the commit that mise appends.
-func currentVersion() string {
-	current, _, _ := strings.Cut(version, "-")
+func (server *daemon) currentVersion() string {
+	current, _, _ := strings.Cut(server.version, "-")
 	return current
 }
 
