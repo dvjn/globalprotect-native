@@ -2,7 +2,7 @@
 go = "1.27.3"
 nfpm = "2.48.0"
 # gomobile compiles the Android core's Java bindings with javac.
-java = "temurin-21.0.13+9.0.LTS"
+java = "temurin-25.0.5+8.0.LTS"
 
 [env]
 VERSION = "0.3.0" # x-release-please-version
