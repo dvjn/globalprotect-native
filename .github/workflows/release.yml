@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # renovate: datasource=github-releases depName=jdx/mise extractVersion=^v(?<version>.+)$
+  MISE_VERSION: 2026.10.25
+
 jobs:
   package:
     name: 🏗️ Build Packages
@@ -16,6 +20,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: 🧰 Install Tools
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: ${{ env.MISE_VERSION }}
       - name: 🏗️ Build and Package
         run: mise run package
       - name: ⬆️ Upload Packages
@@ -41,6 +47,8 @@ jobs:
       - name: 🧰 Install Tools
         if: env.GPN_KEYSTORE_BASE64 != ''
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: ${{ env.MISE_VERSION }}
       - name: 🧭 Use the Latest NDK
         if: env.GPN_KEYSTORE_BASE64 != ''
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
