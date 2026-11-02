@@ -5,7 +5,7 @@ nfpm = "2.48.0"
 java = "temurin-25.0.5+8.0.LTS"
 
 [env]
-VERSION = "0.3.0" # x-release-please-version
+VERSION = "0.3.1" # x-release-please-version
 # A static binary runs on any distribution the packages target. Without cgo, user and group
 # lookups read /etc/passwd and /etc/group only, not SSSD or LDAP.
 CGO_ENABLED = "0"
