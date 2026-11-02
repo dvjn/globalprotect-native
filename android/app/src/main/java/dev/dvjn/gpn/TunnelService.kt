@@ -124,10 +124,11 @@ class TunnelService : VpnService(), App, Listener {
                 PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE),
             )
         for ((address, length) in prefixes(config.getRoutes())) builder.addRoute(address, length)
+        val excluded = prefixes(config.getExcludeRoutes())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            for ((address, length) in prefixes(config.getExcludeRoutes())) {
-                builder.excludeRoute(IpPrefix(InetAddress.getByName(address), length))
-            }
+            for ((address, length) in excluded) builder.excludeRoute(IpPrefix(InetAddress.getByName(address), length))
+        } else if (excluded.isNotEmpty()) {
+            log("Leaving addresses out of the VPN needs Android 13; ${excluded.size} go through it")
         }
         for (server in list(config.getDNSServers())) builder.addDnsServer(server)
         for (domain in list(config.getSearchDomains())) builder.addSearchDomain(domain)

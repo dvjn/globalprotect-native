@@ -48,11 +48,6 @@ type TunnelConfig struct {
 	ExcludeRoutes string
 	DNSServers    string
 	SearchDomains string
-	// IncludeOnly sends only Routes through the tunnel; Domains then name what should go
-	// through it, and otherwise what should not. Android cannot route by name yet, so the
-	// app may only use them for DNS.
-	IncludeOnly bool
-	Domains     string
 }
 
 // Status is the tunnel's state, one of the control.State constants, such as "connected".

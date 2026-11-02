@@ -159,3 +159,63 @@ func TestWithoutIPv6(t *testing.T) {
 		t.Error("an AAAA query for another name is answered")
 	}
 }
+
+func TestAnswerAddressesInPackets(t *testing.T) {
+	domains := NewDomains([]string{"*.corp.example"})
+	server, client := [4]byte{10, 0, 0, 53}, [4]byte{10, 1, 2, 3}
+	message := answer(t, "wiki.corp.example.", aRecord("wiki.corp.example.", 30, [4]byte{10, 9, 8, 7}))
+
+	addresses, ttl, matched := AnswerAddresses(udpPacket(server, client, 53, 40000, message), domains)
+	if !matched || ttl != 30*time.Second || len(addresses) != 1 || !addresses[0].Equal(net.IPv4(10, 9, 8, 7)) {
+		t.Errorf("got %v, %s, %t", addresses, ttl, matched)
+	}
+	if _, _, matched := AnswerAddresses(udpPacket(client, server, 40000, 53, message), domains); matched {
+		t.Error("a packet to port 53 counts as an answer")
+	}
+	fragment := udpPacket(server, client, 53, 40000, message)
+	fragment[6] |= 0x20
+	if _, _, matched := AnswerAddresses(fragment, domains); matched {
+		t.Error("a fragment counts as an answer")
+	}
+	if _, _, matched := AnswerAddresses(fragment[:10], domains); matched {
+		t.Error("a short packet counts as an answer")
+	}
+}
+
+func TestIPv6RefusalPacket(t *testing.T) {
+	domains := NewDomains([]string{"*.corp.example"})
+	server, client := [4]byte{10, 0, 0, 53}, [4]byte{10, 1, 2, 3}
+	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 9, RecursionDesired: true})
+	builder.StartQuestions()
+	builder.Question(dnsmessage.Question{Name: dnsmessage.MustNewName("wiki.corp.example."), Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET})
+	query, err := builder.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reply, refused := IPv6Refusal(udpPacket(client, server, 40000, 53, query), domains)
+	if !refused {
+		t.Fatal("an AAAA query for a matching name is not answered")
+	}
+	if checksum(0, reply[:ipv4HeaderLength]) != 0xffff {
+		t.Error("the IPv4 checksum is wrong")
+	}
+	udpLength := len(reply) - ipv4HeaderLength
+	sum := checksum(0, reply[12:20])
+	sum = checksum(sum, []byte{0, protocolUDP, byte(udpLength >> 8), byte(udpLength)})
+	if checksum(sum, reply[ipv4HeaderLength:]) != 0xffff {
+		t.Error("the UDP checksum is wrong")
+	}
+	payload, sourcePort, destinationPort, ok := udpPayload(reply)
+	if !ok || sourcePort != 53 || destinationPort != 40000 || !bytes.Equal(reply[12:16], server[:]) || !bytes.Equal(reply[16:20], client[:]) {
+		t.Errorf("the reply goes %v:%d → %v:%d", reply[12:16], sourcePort, reply[16:20], destinationPort)
+	}
+	var parser dnsmessage.Parser
+	if header, err := parser.Start(payload); err != nil || header.ID != 9 || !header.Response {
+		t.Errorf("got header %+v, %v", header, err)
+	}
+
+	if _, refused := IPv6Refusal(udpPacket(server, client, 53, 40000, query), domains); refused {
+		t.Error("a packet from port 53 is answered")
+	}
+}

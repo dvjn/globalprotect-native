@@ -68,6 +68,17 @@ func (platform *platform) Establish(network engine.Network) (io.ReadWriteCloser,
 	if err != nil {
 		return nil, err
 	}
+	file, err := openDevice(fd)
+	if err != nil {
+		return nil, err
+	}
+	if network.Domains.Empty() {
+		return file, nil
+	}
+	return newSplitDevice(platform.app, network, file), nil
+}
+
+func openDevice(fd int) (*os.File, error) {
 	// A non-blocking descriptor lets Go's poller interrupt a pending Read on Close.
 	if err := syscall.SetNonblock(fd, true); err != nil {
 		syscall.Close(fd)
@@ -84,8 +95,6 @@ func tunnelConfig(network engine.Network) *TunnelConfig {
 		ExcludeRoutes: joinPrefixes(network.ExcludeRoutes),
 		DNSServers:    strings.Join(network.DNSServers, ","),
 		SearchDomains: strings.Join(network.DNSSuffixes, ","),
-		IncludeOnly:   network.IncludeOnly,
-		Domains:       strings.Join(network.Domains.Entries(), ","),
 	}
 }
 

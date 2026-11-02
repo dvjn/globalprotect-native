@@ -77,8 +77,6 @@ func TestTunnelConfig(t *testing.T) {
 		Routes:        "10.0.0.0/8,10.0.0.53/32,10.0.0.54/32",
 		DNSServers:    "10.0.0.53,10.0.0.54",
 		SearchDomains: "corp.example",
-		IncludeOnly:   true,
-		Domains:       "*.corp.example",
 	}
 	if got != want {
 		t.Errorf("got %+v\nwant %+v", got, want)

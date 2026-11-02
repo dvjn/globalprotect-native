@@ -74,9 +74,9 @@
     <string name="split_only">Only what I choose</string>
     <string name="split_only_detail">Only these domains and addresses go through the VPN.</string>
     <string name="split_only_summary">Only %1$d domains and %2$d addresses</string>
-    <string name="include_domains_hint">One per line; *.example.com covers its subdomains. On Android they only choose which names the VPN resolves.</string>
+    <string name="include_domains_hint">One per line; *.example.com covers its subdomains, but not example.com itself.</string>
     <string name="include_routes_hint">One per line, such as 10.0.0.0/8 or 10.1.2.3.</string>
-    <string name="exclude_domains_hint">One per line; these resolve outside the VPN.</string>
+    <string name="exclude_domains_hint">One per line; *.example.com covers its subdomains. Needs Android 13 or later.</string>
     <string name="hip_detail">Import a profile exported by gpn on a laptop, or by this app, to report as that machine.</string>
     <string name="ssl_only_on">SSL tunnel only</string>
     <string name="ssl_only_off">ESP, with SSL as fallback</string>
