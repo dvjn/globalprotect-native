@@ -37,5 +37,6 @@
     }
   ],
   "vulnerabilityAlerts": { "semanticCommitType": "fix", "semanticCommitScope": "deps" },
-  "dependencyDashboard": true
+  "dependencyDashboard": true,
+  "osvVulnerabilityAlerts": true
 }
