@@ -3,7 +3,8 @@
   "extends": [
     "config:recommended",
     "helpers:pinGitHubActionDigests",
-    ":disableRateLimiting"
+    ":disableRateLimiting",
+    "customManagers:githubActionsVersions"
   ],
   "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
   "packageRules": [
@@ -34,6 +35,10 @@
       "matchPackageNames": ["go"],
       "semanticCommitType": "deps",
       "semanticCommitScope": null
+    },
+    {
+      "matchPackageNames": ["jdx/mise"],
+      "groupName": "mise tools"
     }
   ],
   "vulnerabilityAlerts": { "semanticCommitType": "fix", "semanticCommitScope": "deps" },
