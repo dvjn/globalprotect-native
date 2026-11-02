@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Orange, to tell the debug build from the release one's green. -->
+    <color name="launcher_background">#FFB3541E</color>
+</resources>

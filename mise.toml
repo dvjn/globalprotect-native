@@ -70,5 +70,5 @@ depends = ["android:core"]
 dir = "android"
 run = [
   "./gradlew --console=plain installDebug",
-  "$ANDROID_HOME/platform-tools/adb shell am start -n dev.dvjn.gpn/.MainActivity",
+  "$ANDROID_HOME/platform-tools/adb shell am start -n dev.dvjn.gpn.debug/dev.dvjn.gpn.MainActivity",
 ]

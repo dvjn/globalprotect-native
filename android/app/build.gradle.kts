@@ -34,6 +34,10 @@ android {
     }
 
     buildTypes {
+        // A debug build installs beside the release one, whose key it lacks.
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
             signingConfig = signingConfigs.findByName("release")
         }
