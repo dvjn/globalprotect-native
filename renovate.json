@@ -22,7 +22,20 @@
       "matchManagers": ["mise"],
       "groupName": "mise tools",
       "separateMajorMinor": false
+    },
+    {
+      "description": "What ships in the binary gets the deps type, which release-please lists under Dependencies",
+      "matchManagers": ["gomod"],
+      "semanticCommitType": "deps",
+      "semanticCommitScope": null
+    },
+    {
+      "matchManagers": ["mise"],
+      "matchPackageNames": ["go"],
+      "semanticCommitType": "deps",
+      "semanticCommitScope": null
     }
   ],
+  "vulnerabilityAlerts": { "semanticCommitType": "fix", "semanticCommitScope": "deps" },
   "dependencyDashboard": true
 }
