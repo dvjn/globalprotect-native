@@ -9,7 +9,7 @@ import (
 	"io/fs"
 	"os"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // DefaultPath is where the daemon reads its settings.
